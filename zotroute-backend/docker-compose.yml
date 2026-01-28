@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgis/postgis:15-3.3  # Official PostGIS image
+    container_name: zotroute_db
+    restart: always
+    environment:
+      POSTGRES_USER: zot_admin
+      POSTGRES_PASSWORD: zot_password
+      POSTGRES_DB: zotroute
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Optional: Add an init script to create tables on first launch
+      # - ./init-db:/docker-entrypoint-initdb.d 
+
+  api:
+    build: .
+    container_name: zotroute_api
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://zot_admin:zot_password@db:5432/zotroute
+    depends_on:
+      db:
+        condition: service_healthy # Wait for DB to be ready before starting API
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  adminer: # Web UI to manage your database tables
+    image: adminer
+    restart: always
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:
