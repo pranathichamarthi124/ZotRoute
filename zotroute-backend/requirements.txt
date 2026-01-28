@@ -1,0 +1,16 @@
+# Web Framework
+fastapi
+uvicorn
+
+# Database and ORM
+sqlalchemy
+psycopg2-binary
+
+# Spatial Data (Mapping and Routing)
+geoalchemy2
+shapely
+
+# Data Acquisition and Processing
+requests
+pandas
+protobuf
