@@ -1,0 +1,7 @@
+route_id,route_short_name,route_long_name,route_desc,route_url,route_color,route_text_color,route_type
+4,EM,Emergency Management,,,98C9E1,000000,3
+125515,E,Line,,,9E4DEF,,3
+125516,H,Line,,,14B3C4,,3
+1,N,Line,,,F77A2D,000000,3
+2,M,Line,,,12E32B,000000,3
+3,A,Line,,,FBF140,000000,3
