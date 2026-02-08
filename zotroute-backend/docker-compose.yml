@@ -11,6 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db_init:/docker-entrypoint-initdb.d
     # ADD THIS SECTION:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zot_admin -d zotroute"]
