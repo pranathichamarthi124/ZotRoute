@@ -1,8 +1,4 @@
--- Adminer 5.4.1 PostgreSQL 15.4 dump
-
-DROP DATABASE IF EXISTS "zotroute";
-CREATE DATABASE "zotroute";
-\connect "zotroute";
+CREATE EXTENSION IF NOT EXISTS postgis;
 
 DROP TABLE IF EXISTS "agency";
 CREATE TABLE "public"."agency" (
