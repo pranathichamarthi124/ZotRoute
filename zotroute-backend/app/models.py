@@ -50,3 +50,12 @@ class StopTime(Base):
 
     stop = relationship("Stop")
     trip = relationship("Trip")
+
+class Shape(Base):
+    __tablename__ = "shapes"
+    
+    # Composite PK: shape_id + sequence
+    shape_id = Column(String, primary_key=True, index=True)
+    shape_pt_lat = Column(Float)
+    shape_pt_lon = Column(Float)
+    shape_pt_sequence = Column(Integer, primary_key=True)
