@@ -11,8 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db_init:/docker-entrypoint-initdb.d
-    # ADD THIS SECTION:
+      # REMOVED: - ./db_init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zot_admin -d zotroute"]
       interval: 5s
@@ -31,7 +30,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # UPDATED COMMAND: Runs the data loader first, then starts the server
+    command: >
+      sh -c "python -m app.load_all_data && 
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   adminer:
     image: adminer
