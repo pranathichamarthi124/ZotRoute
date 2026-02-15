@@ -2,6 +2,9 @@
 fastapi
 uvicorn
 
+# the stuff for osm/overpass api
+httpx
+
 # Database and ORM
 sqlalchemy
 psycopg2-binary

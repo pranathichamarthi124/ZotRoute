@@ -1,0 +1,71 @@
+trip_id,route_id,service_id,trip_headsign,trip_short_name,direction_id,shape_id,wheelchair_accessible,bikes_allowed,block_id,block_name
+9520672,2,Friday,M Line,M1: F,0,M Line OPENING Round,,,M1: F,M1: F
+9520673,2,Friday,M Line,M2: F,0,M Line OPENING Round,,,M2/H3: F,M2/H3: F
+9520670,2,M-TH,M Line,M1: M-Th,0,M Line OPENING Round,,,M1: M-Th,M1: M-Th
+9520671,2,M-TH,M Line,M2: M-Th,0,M Line OPENING Round,,,M2/H3: M-Th,M2/H3: M-Th
+9520676,2,Friday,M Line,M1: F,0,M Line REGULAR Round,,,M1: F,M1: F
+9520678,2,Friday,M Line,M2: F,0,M Line REGULAR Round,,,M2/H3: F,M2/H3: F
+9520677,2,Friday,M Line,M1: F,0,M Line REGULAR Round,,,M1: F,M1: F
+9520674,2,M-TH,M Line,M1: M-Th,0,M Line REGULAR Round,,,M1: M-Th,M1: M-Th
+9520675,2,M-TH,M Line,M2: M-Th,0,M Line REGULAR Round,,,M2/H3: M-Th,M2/H3: M-Th
+9520679,2,M-TH,M Line,M1: M-Th,0,M Line REGULAR Round,,,M1: M-Th,M1: M-Th
+9520683,2,Friday,M Line,M2: F,0,M Line CLOSING Round,,,M2/H3: F,M2/H3: F
+9520682,2,Friday,M Line,M1: F,0,M Line CLOSING Round,,,M1: F,M1: F
+9520681,2,M-TH,M Line,M2: M-Th,0,M Line CLOSING Round,,,M2/H3: M-Th,M2/H3: M-Th
+9520680,2,M-TH,M Line,M1: M-Th,0,M Line CLOSING Round,,,M1: M-Th,M1: M-Th
+9520695,3,Friday,A Line,A1: F,0,A Line REGULAR Round,,,A1: F,A1: F
+9520696,3,Friday,A Line,A2: F,0,A Line REGULAR Round,,,A2: F,A2: F
+9520699,3,Friday,A Line,A3: F,0,A Line REGULAR Round,,,A3: F,A3: F
+9520697,3,Friday,A Line,A2: F,0,A Line REGULAR Round,,,A2: F,A2: F
+9520698,3,Friday,A Line,A2: F,0,A Line REGULAR Round,,,A2: F,A2: F
+9520690,3,M-TH,A Line,A1: M-Th,0,A Line REGULAR Round,,,A1: M-Th,A1: M-Th
+9520691,3,M-TH,A Line,A2: M-Th,0,A Line REGULAR Round,,,A2: M-Th,A2: M-Th
+9520694,3,M-TH,A Line,A3: M-Th,0,A Line REGULAR Round,,,A3: M-Th,A3: M-Th
+9520692,3,M-TH,A Line,A2: M-Th,0,A Line REGULAR Round,,,A2: M-Th,A2: M-Th
+9520693,3,M-TH,A Line,A2: M-Th,0,A Line REGULAR Round,,,A2: M-Th,A2: M-Th
+9520700,3,Friday,A Line,A3: F,0,A Line CLOSING Round,,,A3: F,A3: F
+9520701,3,M-TH,A Line,A3: M-Th,0,A Line CLOSING Round,,,A3: M-Th,A3: M-Th
+80,4,Friday,EM,EM: Fri,0,EM 124022 154672,,,EM: Fri,EM: Fri
+79,4,M-TH,EM,EM: M-Th,0,EM 124022 154672,,,EM: M-Th,EM: M-Th
+9520687,3,Friday,A Line,A1: F,0,A Line OPENING Round,,,A1: F,A1: F
+9520688,3,Friday,A Line,A2: F,0,A Line OPENING Round,,,A2: F,A2: F
+9520689,3,Friday,A Line,A3: F,0,A Line OPENING Round,,,A3: F,A3: F
+9520684,3,M-TH,A Line,A1: M-Th,0,A Line OPENING Round,,,A1: M-Th,A1: M-Th
+9520685,3,M-TH,A Line,A2: M-Th,0,A Line OPENING Round,,,A2: M-Th,A2: M-Th
+9520686,3,M-TH,A Line,A3: M-Th,0,A Line OPENING Round,,,A3: M-Th,A3: M-Th
+9520748,125515,Friday,E Line,E1: F,0,E Line,,,E1/H1: F,E1/H1: F
+9520749,125515,Friday,E Line,E2: F,0,E Line,,,E2/H2: F,E2/H2: F
+9520743,125515,M-TH,E Line,E1: M-Th,0,E Line,,,E1/H1: M-Th,E1/H1: M-Th
+9520744,125515,M-TH,E Line,E2: M-th,0,E Line,,,E2/H2: M-Th,E2/H2: M-Th
+9520742,125515,Friday,E Line,E1: F,0,E Line OPENING,,,E1/H1: F,E1/H1: F
+9520738,125515,Friday,E Line,E2: F,0,E Line OPENING,,,E2/H2: F,E2/H2: F
+9520736,125515,M-TH,E Line,E1: M-Th,0,E Line OPENING,,,E1/H1: M-Th,E1/H1: M-Th
+9520737,125515,M-TH,E Line,E2: M-th,0,E Line OPENING,,,E2/H2: M-Th,E2/H2: M-Th
+9520728,1,Friday,N Line,N1: F,0,N Line REGULAR,,,N1: F,N1: F
+9520729,1,Friday,N Line,N2: F,0,N Line REGULAR,,,N2: F,N2: F
+9520727,1,Friday,N Line,N3: F,0,N Line REGULAR,,,N3: F,N3: F
+9520730,1,Friday,N Line,N2: F,0,N Line REGULAR,,,N2: F,N2: F
+9520731,1,Friday,N Line,N2: F,0,N Line REGULAR,,,N2: F,N2: F
+9520732,1,M-TH,N Line,N1: M-Th,0,N Line REGULAR,,,N1: M-Th,N1: M-Th
+9520733,1,M-TH,N Line,N2: M-Th,0,N Line REGULAR,,,N2: M-Th,N2: M-Th
+9520726,1,M-TH,N Line,N3: M-Th,0,N Line REGULAR,,,N3: M-Th,N3: M-Th
+9520734,1,M-TH,N Line,N2: M-Th,0,N Line REGULAR,,,N2: M-Th,N2: M-Th
+9520735,1,M-TH,N Line,N2: M-Th,0,N Line REGULAR,,,N2: M-Th,N2: M-Th
+9520721,1,Friday,N Line,N1: F,0,N Line OPENING Round,,,N1: F,N1: F
+9520722,1,Friday,N Line,N2: F,0,N Line OPENING Round,,,N2: F,N2: F
+9520723,1,Friday,N Line,N3: F,0,N Line OPENING Round,,,N3: F,N3: F
+9520718,1,M-TH,N Line,N1: M-Th,0,N Line OPENING Round,,,N1: M-Th,N1: M-Th
+9520719,1,M-TH,N Line,N2: M-Th,0,N Line OPENING Round,,,N2: M-Th,N2: M-Th
+9520720,1,M-TH,N Line,N3: M-Th,0,N Line OPENING Round,,,N3: M-Th,N3: M-Th
+9520708,125516,Friday,H Line,H1: F,0,H Line Regular,,,E1/H1: F,E1/H1: F
+9520709,125516,Friday,H Line,H2: F,0,H Line Regular,,,E2/H2: F,E2/H2: F
+9520710,125516,Friday,H Line,H3: F,0,H Line Regular,,,M2/H3: F,M2/H3: F
+9520706,125516,M-TH,H Line,H1: M-Th,0,H Line Regular,,,E1/H1: M-Th,E1/H1: M-Th
+9520707,125516,M-TH,H Line,H2: M-Th,0,H Line Regular,,,E2/H2: M-Th,E2/H2: M-Th
+9520711,125516,M-TH,H Line,H3: M-Th,0,H Line Regular,,,M2/H3: M-Th,M2/H3: M-Th
+9520715,125516,Friday,H Line,H2: F,0,H Line CLOSING Round,,,E2/H2: F,E2/H2: F
+9520713,125516,Friday,H Line,H3: F,0,H Line CLOSING Round,,,M2/H3: F,M2/H3: F
+9520714,125516,Friday,H Line,H1: F,0,H Line CLOSING Round,,,E1/H1: F,E1/H1: F
+9520717,125516,M-TH,H Line,H2: M-Th,0,H Line CLOSING Round,,,E2/H2: M-Th,E2/H2: M-Th
+9520712,125516,M-TH,H Line,H3: M-Th,0,H Line CLOSING Round,,,M2/H3: M-Th,M2/H3: M-Th
+9520716,125516,M-TH,H Line,H1: M-Th,0,H Line CLOSING Round,,,E1/H1: M-Th,E1/H1: M-Th

@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-# Ensure you have "FastAPI", "uvicorn", "SQLAlchemy", "GeoAlchemy2", and "psycopg2-binary" in requirements.txt
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
