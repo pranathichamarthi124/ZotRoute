@@ -199,6 +199,11 @@ from collections import deque
 
 # Update in ZotRoute/zotroute-backend/app/main.py
 
+from datetime import datetime, time, timedelta
+from typing import Optional
+from collections import deque
+from sqlalchemy import text
+
 @app.get("/plan_trip/multi-transfer")
 def plan_multi_transfer(
     origin_stop_id: str, 
@@ -206,19 +211,27 @@ def plan_multi_transfer(
     arrive_by: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    def parse_time(t_str):
+    def parse_time_str(t_str):
         if not t_str: return None
+        t_str = t_str.strip()
         try:
-            parts = list(map(int, t_str.strip().split(':')))
-            return time(parts[0] % 24, parts[1], parts[2] if len(parts)>2 else 0)
+            if ":" not in t_str: return f"{int(t_str):02d}:00:00"
+            parts = list(map(int, t_str.split(':')))
+            return f"{parts[0]:02d}:{parts[1]:02d}:{parts[2] if len(parts)>2 else 0:02d}"
         except: return None
 
-    deadline_t = parse_time(arrive_by)
-    is_time_sensitive = deadline_t is not None
+    def get_py_time(t_str):
+        if not t_str: return time(0,0,0)
+        try:
+            h, m, s = map(int, t_str.strip().split(':'))
+            return time(h % 24, m, s)
+        except: return time(0,0,0)
 
-    # Backward search starts at destination, Forward starts at origin
+    deadline_str = parse_time_str(arrive_by)
+    is_time_sensitive = deadline_str is not None
+
     start_node = dest_stop_id.strip() if is_time_sensitive else origin_stop_id.strip()
-    queue = deque([(start_node, [], deadline_t if is_time_sensitive else None)])
+    queue = deque([(start_node, [], deadline_str if is_time_sensitive else None)])
     visited = {start_node}
     max_depth = 4 
 
@@ -226,10 +239,12 @@ def plan_multi_transfer(
         curr_id, path, current_constraint = queue.popleft()
         if len(path) >= max_depth: continue
 
-        # The core logic: Find buses that connect to our current stop (or nearby)
-        # For backward search: we look for trips ARRIVING at 'curr'
-        # For forward search: we look for trips DEPARTING from 'curr'
-        query_sql = """
+        # --- Dynamic SQL Sorting ---
+        # If Backward (Time Sensitive): Sort by Arrival DESC (Closest to deadline first)
+        # If Forward (Generic): Sort by Departure ASC (Soonest bus first)
+        order_clause = "ORDER BY st2.arrival_time DESC" if is_time_sensitive else "ORDER BY st1.departure_time ASC"
+
+        query_sql = f"""
             WITH nearby_stops AS (
                 SELECT s2.stop_id, s2.stop_name,
                        ST_Distance(
@@ -254,34 +269,31 @@ def plan_multi_transfer(
                 st2.arrival_time,
                 ns.walk_dist
             FROM nearby_stops ns
-            JOIN stop_times {target_join} ON ns.stop_id = {target_join}.stop_id
-            JOIN stop_times {other_join} ON st1.trip_id = st2.trip_id
+            JOIN stop_times {{target_join}} ON ns.stop_id = {{target_join}}.stop_id
+            JOIN stop_times {{other_join}} ON st1.trip_id = st2.trip_id
             JOIN trips t ON st1.trip_id = t.trip_id
             JOIN routes r ON t.route_id = r.route_id
             JOIN stops orig_s ON st1.stop_id = orig_s.stop_id
             JOIN stops dest_s ON st2.stop_id = dest_s.stop_id
             WHERE st1.stop_sequence < st2.stop_sequence
-            {time_filter}
+            {{time_filter}}
+            {order_clause}
         """
 
         time_filter = ""
         if is_time_sensitive:
-            # We convert "HH:MM:SS" to an interval and compare to our constraint
-            time_filter = "AND (TRIM(st2.arrival_time)::interval <= :constraint::interval)"
+            time_filter = "AND TRIM(st2.arrival_time) <= :constraint"
             full_query = text(query_sql.format(target_join="st2", other_join="st1", time_filter=time_filter))
         else:
             full_query = text(query_sql.format(target_join="st1", other_join="st2", time_filter=""))
 
         try:
             results = db.execute(full_query, {"curr": curr_id, "constraint": current_constraint}).fetchall()
-        except Exception as e:
-            print(f"SQL Error: {e}")
-            raise HTTPException(status_code=500, detail="Database query failed.")
+        except Exception:
+            continue
 
         for row in results:
             next_search_id = row.prev_id.strip() if is_time_sensitive else row.next_id.strip()
-            
-            # Distance safety check
             dist = row.walk_dist if row.walk_dist is not None else 0
             
             leg = {
@@ -294,20 +306,34 @@ def plan_multi_transfer(
             if is_time_sensitive:
                 leg.update({"departure": row.departure_time.strip(), "arrival": row.arrival_time.strip()})
                 
-                # Verify transfer time (walking speed ~1.2m/s)
-                walk_buffer = timedelta(seconds=(dist / 1.2))
-                arrival_dt = datetime.combine(datetime.today(), parse_time(row.arrival_time))
-                if (arrival_dt + walk_buffer).time() > current_constraint:
-                    continue
-                new_path = [leg] + path
+                # Check constraints (walking buffer)
+                try:
+                    dep_obj = get_py_time(row.departure_time)
+                    arr_obj = get_py_time(row.arrival_time)
+                    constraint_obj = get_py_time(current_constraint)
+                    walk_buffer = timedelta(seconds=(dist / 1.0))
+                    
+                    if (datetime.combine(datetime.today(), arr_obj) + walk_buffer).time() > constraint_obj:
+                        continue
+                        
+                    new_constraint_str = row.departure_time.strip()
+                    new_path = [leg] + path
+                except: continue
             else:
                 new_path = path + [leg]
+                new_constraint_str = None
 
-            if next_search_id == (origin_stop_id.strip() if is_time_sensitive else dest_stop_id.strip()):
-                return {"status": "success", "mode": "time-constrained" if is_time_sensitive else "generic", "path": new_path}
+            target_id = origin_stop_id.strip() if is_time_sensitive else dest_stop_id.strip()
+            
+            if next_search_id == target_id:
+                return {
+                    "status": "success", 
+                    "mode": "time-constrained" if is_time_sensitive else "generic", 
+                    "path": new_path
+                }
 
             if next_search_id not in visited:
                 visited.add(next_search_id)
-                queue.append((next_search_id, new_path, parse_time(row.departure_time) if is_time_sensitive else None))
+                queue.append((next_search_id, new_path, new_constraint_str))
 
     raise HTTPException(status_code=404, detail="No route found.")
