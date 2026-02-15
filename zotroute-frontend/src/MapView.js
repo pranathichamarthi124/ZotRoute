@@ -22,12 +22,12 @@ function MapView() {
             mapStyle="mapbox://styles/mapbox/streets-v12"
             mapboxAccessToken={MAPBOX_TOKEN}>
             {busStops.map(stop => (
-                <Marker key={stop.id} longitude={stop.lon} latitude={stop.lat} onClick={evt => {evt.originalEvent.stopPropagation(); setPopupInfo(stop);}}>
+                <Marker key={stop.id} longitude={stop.long} latitude={stop.lat} onClick={evt => {evt.originalEvent.stopPropagation(); setPopupInfo(stop);}}>
                     <div style={{backgroundColor: stop.route === 'R' ? '#0064A4' : '#FF6B35', width: '20xpx', height: '20px', borderRadius: '50%', border: '2px solid white', cursor: 'pointer'}} />
                 </Marker>
             ))}
             {popupInfo && (
-                <Popup longitude={popupInfo.lon} latitude={popupInfo.lat} onClose={() => setPopupInfo(null)} closeButton={true} closeOnClick={false}>
+                <Popup longitude={popupInfo.long} latitude={popupInfo.lat} onClose={() => setPopupInfo(null)} closeButton={true} closeOnClick={false}>
                     <div> 
                         <h3>{popupInfo.name}</h3>
                         <p>Route: {popupInfo.route}</p>
