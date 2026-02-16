@@ -1,14 +1,13 @@
 import React from "react";
 import "./Navbar.css";
 
-function Navbar({ filter, setFilter }) {
+export default function Navbar({ filter, setFilter }) {
   return (
-    <nav className="navbar">
-      <div className="navbar-brand">
-        <h1>🚍 ZotRoute</h1>
-        <p>UCI Transit Guide</p>
+    <nav className="nav">
+      <div className="nav-proj-name">
+        <h1>ZotRoute</h1>
+        <p>One-Stop UCI Commute</p>
       </div>
-
       <div className="filter-buttons">
         <button
           className={filter === "all" ? "active" : ""}
@@ -17,8 +16,8 @@ function Navbar({ filter, setFilter }) {
           All Routes
         </button>
         <button
-          className={filter === "AE" ? "active" : ""}
-          onClick={() => setFilter("AE")}
+          className={filter === "AntExp" ? "active" : ""}
+          onClick={() => setFilter("AntExp")}
         >
           Anteater Express
         </button>
@@ -32,5 +31,3 @@ function Navbar({ filter, setFilter }) {
     </nav>
   );
 }
-
-export default Navbar;
