@@ -4,6 +4,14 @@ from geoalchemy2 import Geometry
 
 Base = declarative_base()
 
+# Add to ZotRoute/zotroute-backend/app/models.py
+
+class Transfer(Base):
+    __tablename__ = "transfers"
+    from_stop_id = Column(String, primary_key=True)
+    to_stop_id = Column(String, primary_key=True)
+    walk_meters = Column(Float)
+
 class Stop(Base):
     __tablename__ = "stops"
     
