@@ -199,10 +199,12 @@ from collections import deque
 
 # Update in ZotRoute/zotroute-backend/app/main.py
 
-from datetime import datetime, time, timedelta
+from fastapi import HTTPException, Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import Optional
 from collections import deque
-from sqlalchemy import text
+from datetime import datetime, time, timedelta
 
 @app.get("/plan_trip/multi-transfer")
 def plan_multi_transfer(
@@ -239,26 +241,10 @@ def plan_multi_transfer(
         curr_id, path, current_constraint = queue.popleft()
         if len(path) >= max_depth: continue
 
-        # --- Dynamic SQL Sorting ---
-        # If Backward (Time Sensitive): Sort by Arrival DESC (Closest to deadline first)
-        # If Forward (Generic): Sort by Departure ASC (Soonest bus first)
         order_clause = "ORDER BY st2.arrival_time DESC" if is_time_sensitive else "ORDER BY st1.departure_time ASC"
 
+        # The optimized query using the pre-computed 'transfers' table
         query_sql = f"""
-            WITH nearby_stops AS (
-                SELECT s2.stop_id, s2.stop_name,
-                       ST_Distance(
-                           ST_MakePoint(s1.stop_lon, s1.stop_lat)::geography,
-                           ST_MakePoint(s2.stop_lon, s2.stop_lat)::geography
-                       ) as walk_dist
-                FROM stops s1, stops s2
-                WHERE s1.stop_id = :curr
-                  AND ST_DWithin(
-                      ST_MakePoint(s1.stop_lon, s1.stop_lat)::geography,
-                      ST_MakePoint(s2.stop_lon, s2.stop_lat)::geography,
-                      300
-                  )
-            )
             SELECT DISTINCT
                 st1.stop_id AS prev_id,
                 st2.stop_id AS next_id,
@@ -267,15 +253,16 @@ def plan_multi_transfer(
                 r.route_short_name,
                 st1.departure_time,
                 st2.arrival_time,
-                ns.walk_dist
-            FROM nearby_stops ns
-            JOIN stop_times {{target_join}} ON ns.stop_id = {{target_join}}.stop_id
+                tr.walk_meters
+            FROM transfers tr
+            JOIN stop_times {{target_join}} ON tr.to_stop_id = {{target_join}}.stop_id
             JOIN stop_times {{other_join}} ON st1.trip_id = st2.trip_id
             JOIN trips t ON st1.trip_id = t.trip_id
             JOIN routes r ON t.route_id = r.route_id
             JOIN stops orig_s ON st1.stop_id = orig_s.stop_id
             JOIN stops dest_s ON st2.stop_id = dest_s.stop_id
-            WHERE st1.stop_sequence < st2.stop_sequence
+            WHERE tr.from_stop_id = :curr
+              AND st1.stop_sequence < st2.stop_sequence
             {{time_filter}}
             {order_clause}
         """
@@ -289,36 +276,54 @@ def plan_multi_transfer(
 
         try:
             results = db.execute(full_query, {"curr": curr_id, "constraint": current_constraint}).fetchall()
-        except Exception:
+        except Exception as e:
+            print(f"SQL Error: {e}")
             continue
 
         for row in results:
-            next_search_id = row.prev_id.strip() if is_time_sensitive else row.next_id.strip()
-            dist = row.walk_dist if row.walk_dist is not None else 0
+            prev_id = row.prev_id.strip() if row.prev_id else ""
+            next_id = row.next_id.strip() if row.next_id else ""
+            next_search_id = prev_id if is_time_sensitive else next_id
+            
+            if not next_search_id:
+                continue
+            
+            dist = row.walk_meters if row.walk_meters is not None else 0
+            route_name = row.route_short_name if row.route_short_name else "Bus"
+            from_name = row.from_name if row.from_name else "Unknown Stop"
+            to_name = row.to_name if row.to_name else "Unknown Stop"
             
             leg = {
-                "route": row.route_short_name,
-                "from": row.from_name,
-                "to": row.to_name,
+                "route": route_name,
+                "from": from_name,
+                "to": to_name,
                 "walk_meters": round(dist)
             }
             
             if is_time_sensitive:
-                leg.update({"departure": row.departure_time.strip(), "arrival": row.arrival_time.strip()})
+                if not row.departure_time or not row.arrival_time:
+                    continue 
                 
-                # Check constraints (walking buffer)
+                dep_time_str = row.departure_time.strip()
+                arr_time_str = row.arrival_time.strip()
+                leg.update({"departure": dep_time_str, "arrival": arr_time_str})
+                
                 try:
-                    dep_obj = get_py_time(row.departure_time)
-                    arr_obj = get_py_time(row.arrival_time)
+                    dep_obj = get_py_time(dep_time_str)
+                    arr_obj = get_py_time(arr_time_str)
                     constraint_obj = get_py_time(current_constraint)
-                    walk_buffer = timedelta(seconds=(dist / 1.0))
                     
-                    if (datetime.combine(datetime.today(), arr_obj) + walk_buffer).time() > constraint_obj:
+                    walk_buffer = timedelta(seconds=(dist / 1.0)) 
+                    arr_dt = datetime.combine(datetime.today(), arr_obj)
+                    const_dt = datetime.combine(datetime.today(), constraint_obj)
+                    
+                    if (arr_dt + walk_buffer) > const_dt:
                         continue
                         
-                    new_constraint_str = row.departure_time.strip()
+                    new_constraint_str = dep_time_str
                     new_path = [leg] + path
-                except: continue
+                except Exception:
+                    continue 
             else:
                 new_path = path + [leg]
                 new_constraint_str = None
