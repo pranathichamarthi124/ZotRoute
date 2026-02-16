@@ -1,9 +1,9 @@
-.navbar {
+.nav {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    background: white;
+    background: antiquewhite;
     padding: 15px 20px;
     display: flex;
     justify-content: space-between;
@@ -12,13 +12,13 @@
     z-index: 1000;
 }
 
-.navbar-brand h1 {
+.nav-proj-name h1 {
     margin: 0;
     font-size: 24px;
     color: #0064a4;
 }
 
-.navbar-brand p {
+.nav-proj-name p {
     margin: 0;
     font-size: 12px;
     color: #666;
