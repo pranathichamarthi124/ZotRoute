@@ -1,8 +1,16 @@
-import React from 'react';
-import MapView from './MapView';
+import React, { useState } from "react";
+import MapView from "./MapView";
+import Navbar from "./Navbar";
 
-function App(){
-    return( <div className="App"><MapView /></div> );
+function App() {
+  const [filter, setFilter] = useState("all");
+
+  return (
+    <div className="App">
+      <Navbar filter={filter} setFilter={setFilter} />
+      <MapView filter={filter} />
+    </div>
+  );
 }
 
 export default App;

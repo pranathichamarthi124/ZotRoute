@@ -1,0 +1,50 @@
+.navbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+}
+
+.navbar-brand h1 {
+    margin: 0;
+    font-size: 24px;
+    color: #0064a4;
+}
+
+.navbar-brand p {
+    margin: 0;
+    font-size: 12px;
+    color: #666;
+}
+
+.filter-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.filter-buttons button {
+    padding: 8px 16px;
+    border: 2px solid #0064a4;
+    background: white;
+    color: #0064a4;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.filter-buttons button:hover {
+    background: #f0f8ff;
+}
+
+.filter-buttons button.active {
+    background: #0064a4;
+    color: white;
+}
