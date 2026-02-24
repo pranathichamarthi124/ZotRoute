@@ -2,12 +2,14 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List
+from typing import Optional
 import httpx
 from datetime import datetime, timedelta
 
 from app.init_db import SessionLocal
 from app.models import Stop, Route
 from app.schemas import StopBase, RouteBase
+
 
 app = FastAPI(title="ZotRoute API")
 
@@ -18,30 +20,92 @@ def get_db():
     finally:
         db.close()
 
-async def get_osm_businesses(lat: float, lon: float):
+async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str] = None):
+    # --- Helper: Calculate Distance between two GPS coordinates ---
+    def calculate_distance(lat1, lon1, lat2, lon2):
+        R = 6371000  # Radius of Earth in meters
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlam = math.radians(lon2 - lon1)
+        a = math.sin(dphi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam/2)**2
+        return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+
     overpass_url = "https://overpass-api.de/api/interpreter"
+    
+    # 1. Dynamically build the OSM query conditions
+    query_body = ""
+    
+    if business_type:
+        bt = business_type.lower().strip()
+        if bt in ["food", "restaurant", "restaurants"]:
+            query_body = f'nwr["amenity"~"restaurant|fast_food|food_court"](around:300,{lat},{lon});'
+        elif bt in ["coffee", "cafe", "boba"]:
+            query_body = f'nwr["amenity"="cafe"](around:300,{lat},{lon});'
+        elif bt in ["shop", "shopping", "store", "retail"]:
+            query_body = f'nwr["shop"](around:300,{lat},{lon});'
+        elif bt in ["bar", "pubs", "nightlife"]:
+            query_body = f'nwr["amenity"~"bar|pub"](around:300,{lat},{lon});'
+        else:
+            query_body = f"""
+            nwr["name"~"(?i){bt}"](around:300,{lat},{lon});
+            nwr["amenity"~"(?i){bt}"](around:300,{lat},{lon});
+            nwr["shop"~"(?i){bt}"](around:300,{lat},{lon});
+            """
+    else:
+        # Default fallback
+        query_body = f"""
+        nwr["amenity"~"restaurant|cafe|fast_food|bar"](around:300,{lat},{lon});
+        nwr["shop"](around:300,{lat},{lon});
+        """
+
+    # We use "out center;" so Overpass calculates the center coordinate of large buildings
     query = f"""
     [out:json];
     (
-      nwr["amenity"~"restaurant|cafe|fast_food|bar"](around:300,{lat},{lon});
-      nwr["shop"](around:300,{lat},{lon});
+      {query_body}
     );
     out center;
     """
+    
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(overpass_url, data={'data': query}, timeout=5.0)
             if response.status_code == 200:
                 elements = response.json().get("elements", [])
-                return [
-                    {
-                        "name": e.get("tags", {}).get("name", "Unknown Business"),
-                        "category": e.get("tags", {}).get("amenity") or e.get("tags", {}).get("shop")
-                    }
-                    for e in elements if "tags" in e and "name" in e["tags"]
-                ][:5]
-    except Exception:
+                
+                parsed_businesses = []
+                for e in elements:
+                    # Skip if it doesn't have a name
+                    if "tags" not in e or "name" not in e["tags"]:
+                        continue
+                    
+                    # 2. Extract Coordinates
+                    # Nodes have 'lat' and 'lon'. Ways (buildings) have a 'center' object.
+                    b_lat = e.get("lat") or e.get("center", {}).get("lat")
+                    b_lon = e.get("lon") or e.get("center", {}).get("lon")
+                    
+                    if not b_lat or not b_lon:
+                        continue
+                        
+                    # 3. Calculate Distance
+                    dist = calculate_distance(lat, lon, b_lat, b_lon)
+                    
+                    parsed_businesses.append({
+                        "name": e["tags"]["name"],
+                        "category": e["tags"].get("amenity") or e["tags"].get("shop") or e["tags"].get("leisure", "business"),
+                        "distance_meters": round(dist)
+                    })
+                
+                # 4. Sort the list by distance (closest first)
+                parsed_businesses.sort(key=lambda x: x["distance_meters"])
+                
+                # 5. Return the top 5 closest
+                return parsed_businesses[:5]
+                
+    except Exception as e:
+        print(f"Overpass Error: {e}")
         return []
+        
     return []
 
 @app.get("/")
@@ -51,6 +115,10 @@ def read_root():
 @app.get("/routes/", response_model=List[RouteBase])
 def get_routes(db: Session = Depends(get_db)):
     return db.query(Route).all()
+
+@app.get("/stops/", response_model=List[StopBase])
+def get_stops(db: Session = Depends(get_db)):
+    return db.query(Stop).all()
 
 @app.get("/recommend/transit")
 async def recommend_transit(
@@ -119,15 +187,19 @@ async def recommend_transit(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/recommend/explore")
-async def explore_nearby(stop_id: str, db: Session = Depends(get_db)):
+async def explore_nearby(
+    stop_id: str, 
+    business_type: Optional[str] = None, # <-- Added optional filter
+    db: Session = Depends(get_db)
+):
     stop_query = text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :id")
     stop = db.execute(stop_query, {"id": stop_id}).fetchone()
     
     if not stop:
         raise HTTPException(status_code=404, detail="Stop not found.")
         
-    nearby = await get_osm_businesses(stop.stop_lat, stop.stop_lon)
-    return {"stop_id": stop_id, "nearby_businesses": nearby}
+    nearby = await get_osm_businesses(stop.stop_lat, stop.stop_lon, business_type)
+    return {"stop_id": stop_id, "filter_applied": business_type, "nearby_businesses": nearby}
 
 # Add this to ZotRoute/zotroute-backend/app/main.py
 
