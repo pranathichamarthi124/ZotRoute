@@ -342,3 +342,204 @@ def plan_multi_transfer(
                 queue.append((next_search_id, new_path, new_constraint_str))
 
     raise HTTPException(status_code=404, detail="No route found.")
+
+
+@app.get("/plan_trip/coordinates")
+def plan_trip_by_coords(
+    origin_lat: float,
+    origin_lon: float,
+    dest_lat: float,
+    dest_lon: float,
+    arrive_by: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    # --- Helper: Find Nearest Stop ---
+    def get_nearest_stop(lat: float, lon: float):
+        query = text("""
+            SELECT stop_id, stop_name,
+                   ST_Distance(
+                       ST_MakePoint(:lon, :lat)::geography,
+                       ST_MakePoint(stop_lon, stop_lat)::geography
+                   ) as walk_dist
+            FROM stops
+            ORDER BY walk_dist ASC
+            LIMIT 1
+        """)
+        result = db.execute(query, {"lat": lat, "lon": lon}).fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="No transit stops found near these coordinates.")
+        return result.stop_id.strip(), result.stop_name, round(result.walk_dist)
+
+    orig_stop_id, orig_stop_name, orig_walk_meters = get_nearest_stop(origin_lat, origin_lon)
+    dest_stop_id, dest_stop_name, dest_walk_meters = get_nearest_stop(dest_lat, dest_lon)
+
+    # --- Helper: Time Parsers ---
+    def parse_time_str(t_str):
+        if not t_str: return None
+        t_str = t_str.strip()
+        try:
+            if ":" not in t_str: return f"{int(t_str):02d}:00:00"
+            parts = list(map(int, t_str.split(':')))
+            return f"{parts[0]:02d}:{parts[1]:02d}:{parts[2] if len(parts)>2 else 0:02d}"
+        except: return None
+
+    def get_py_time(t_str):
+        if not t_str: return time(0,0,0)
+        try:
+            h, m, s = map(int, t_str.strip().split(':'))
+            return time(h % 24, m, s)
+        except: return time(0,0,0)
+
+    # --- Setup Search ---
+    deadline_str = parse_time_str(arrive_by)
+    is_time_sensitive = deadline_str is not None
+
+    start_node = dest_stop_id if is_time_sensitive else orig_stop_id
+    queue = deque([(start_node, [], deadline_str if is_time_sensitive else None)])
+    visited = {start_node}
+    max_depth = 4 
+
+    # --- BFS Algorithm ---
+    while queue:
+        curr_id, path, current_constraint = queue.popleft()
+        if len(path) >= max_depth: continue
+
+        order_clause = "ORDER BY st2.arrival_time DESC" if is_time_sensitive else "ORDER BY st1.departure_time ASC"
+
+        query_sql = f"""
+            SELECT DISTINCT
+                st1.stop_id AS prev_id,
+                st2.stop_id AS next_id,
+                orig_s.stop_name AS from_name,
+                dest_s.stop_name AS to_name,
+                r.route_short_name,
+                st1.departure_time,
+                st2.arrival_time,
+                tr.walk_meters
+            FROM transfers tr
+            JOIN stop_times {{target_join}} ON tr.to_stop_id = {{target_join}}.stop_id
+            JOIN stop_times {{other_join}} ON st1.trip_id = st2.trip_id
+            JOIN trips t ON st1.trip_id = t.trip_id
+            JOIN routes r ON t.route_id = r.route_id
+            JOIN stops orig_s ON st1.stop_id = orig_s.stop_id
+            JOIN stops dest_s ON st2.stop_id = dest_s.stop_id
+            WHERE tr.from_stop_id = :curr
+              AND st1.stop_sequence < st2.stop_sequence
+            {{time_filter}}
+            {order_clause}
+        """
+
+        time_filter = ""
+        if is_time_sensitive:
+            time_filter = "AND TRIM(st2.arrival_time) <= :constraint"
+            full_query = text(query_sql.format(target_join="st2", other_join="st1", time_filter=time_filter))
+        else:
+            full_query = text(query_sql.format(target_join="st1", other_join="st2", time_filter=""))
+
+        try:
+            results = db.execute(full_query, {"curr": curr_id, "constraint": current_constraint}).fetchall()
+        except Exception as e:
+            continue
+
+        for row in results:
+            prev_id = row.prev_id.strip() if row.prev_id else ""
+            next_id = row.next_id.strip() if row.next_id else ""
+            next_search_id = prev_id if is_time_sensitive else next_id
+            
+            if not next_search_id: continue
+            
+            dist = row.walk_meters if row.walk_meters is not None else 0
+            route_name = row.route_short_name if row.route_short_name else "Bus"
+            from_name = row.from_name if row.from_name else "Unknown Stop"
+            to_name = row.to_name if row.to_name else "Unknown Stop"
+            
+            leg = {
+                "route": route_name,
+                "from": from_name,
+                "to": to_name,
+                "walk_meters": round(dist)
+            }
+            
+            if is_time_sensitive:
+                if not row.departure_time or not row.arrival_time: continue 
+                
+                dep_time_str = row.departure_time.strip()
+                arr_time_str = row.arrival_time.strip()
+                leg.update({"departure": dep_time_str, "arrival": arr_time_str})
+                
+                try:
+                    dep_obj = get_py_time(dep_time_str)
+                    arr_obj = get_py_time(arr_time_str)
+                    constraint_obj = get_py_time(current_constraint)
+                    
+                    walk_buffer = timedelta(seconds=(dist / 1.0)) 
+                    arr_dt = datetime.combine(datetime.today(), arr_obj)
+                    const_dt = datetime.combine(datetime.today(), constraint_obj)
+                    
+                    if (arr_dt + walk_buffer) > const_dt: continue
+                        
+                    new_constraint_str = dep_time_str
+                    new_path = [leg] + path
+                except Exception:
+                    continue 
+            else:
+                new_path = path + [leg]
+                new_constraint_str = None
+
+            target_id = orig_stop_id if is_time_sensitive else dest_stop_id
+            
+            if next_search_id == target_id:
+                # --- Format the JSON to be a readable step-by-step itinerary ---
+                readable_itinerary = []
+                
+                for i, step in enumerate(new_path):
+                    # 1. Combine the starting GPS walk with the walk to the first bus
+                    if i == 0:
+                        total_start_walk = orig_walk_meters + step.get("walk_meters", 0)
+                        if total_start_walk > 0:
+                            readable_itinerary.append({
+                                "action": "Walk",
+                                "destination": step["from"],
+                                "distance_meters": total_start_walk
+                            })
+                    # 1b. Handle walking between transfers
+                    else:
+                        if step.get("walk_meters", 0) > 0:
+                            readable_itinerary.append({
+                                "action": "Walk",
+                                "destination": step["from"],
+                                "distance_meters": step["walk_meters"]
+                            })
+                    
+                    # 2. Add the Bus Ride
+                    transit_leg = {
+                        "action": "Ride Bus",
+                        "route": step["route"],
+                        "from": step["from"],
+                        "to": step["to"]
+                    }
+                    if is_time_sensitive:
+                        transit_leg["departure"] = step["departure"]
+                        transit_leg["arrival"] = step["arrival"]
+                        
+                    readable_itinerary.append(transit_leg)
+
+                # 3. Add the final walk from the last stop to the destination GPS
+                if dest_walk_meters > 0:
+                    readable_itinerary.append({
+                        "action": "Walk",
+                        "destination": "Final Destination",
+                        "distance_meters": dest_walk_meters
+                    })
+
+                return {
+                    "status": "success", 
+                    "mode": "time-constrained" if is_time_sensitive else "generic",
+                    "itinerary": readable_itinerary
+                }
+
+            if next_search_id not in visited:
+                visited.add(next_search_id)
+                queue.append((next_search_id, new_path, new_constraint_str))
+
+    raise HTTPException(status_code=404, detail="No route found between these coordinates.")
