@@ -1,17 +1,38 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+<<<<<<< HEAD
 from typing import List
 from typing import Optional
+=======
+from typing import List, Optional, Dict, Any
+>>>>>>> 02ed140 (added recommendation system and schedule uploader)
 import httpx
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
+from collections import deque
+from icalendar import Calendar
+import re
 
 from app.init_db import SessionLocal
 from app.models import Stop, Route
 from app.schemas import StopBase, RouteBase
+from app.constants import BUILDING_TO_STOP, STUDY_HUBS
+from app.services.recommender import get_best_recommendation
 
 
 app = FastAPI(title="ZotRoute API")
+
+CAMPUS_ZONES = {
+    "North": {"hub": "University Center", "buildings": ["HIB", "SSLH", "SSH", "HH", "DBH", "LLIB", "ALH"]},
+    "South": {"hub": "Physical Sciences/MSTB", "buildings": ["MSTB", "PSLH", "RH", "FRH", "NS1", "NS2"]},
+    "East":  {"hub": "Engineering Gateway", "buildings": ["EH", "ISEB", "ET", "ENG", "MDE", "DBH"]}
+}
+
+HUB_COORDINATES = {
+    "University Center": {"lat": 33.6487, "lon": -117.8427},
+    "Physical Sciences/MSTB": {"lat": 33.6425, "lon": -117.8421},
+    "Engineering Gateway": {"lat": 33.6437, "lon": -117.8416}
+}
 
 def get_db():
     db = SessionLocal()
@@ -20,6 +41,7 @@ def get_db():
     finally:
         db.close()
 
+<<<<<<< HEAD
 async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str] = None):
     # --- Helper: Calculate Distance between two GPS coordinates ---
     def calculate_distance(lat1, lon1, lat2, lon2):
@@ -29,6 +51,18 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
         dlam = math.radians(lon2 - lon1)
         a = math.sin(dphi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam/2)**2
         return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+=======
+async def get_osm_businesses(lat: float, lon: float, radius: int = 1200):
+    import math
+
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371000
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlam = math.radians(lon2 - lon1)
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+>>>>>>> 02ed140 (added recommendation system and schedule uploader)
 
     overpass_url = "https://overpass-api.de/api/interpreter"
     
@@ -62,7 +96,12 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
     query = f"""
     [out:json];
     (
+<<<<<<< HEAD
       {query_body}
+=======
+      nwr["amenity"~"restaurant|cafe|fast_food|food_court"](around:{radius},{lat},{lon});
+      nwr["shop"~"mall|supermarket|convenience"](around:{radius},{lat},{lon});
+>>>>>>> 02ed140 (added recommendation system and schedule uploader)
     );
     out center;
     """
@@ -70,6 +109,7 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(overpass_url, data={'data': query}, timeout=5.0)
+<<<<<<< HEAD
             if response.status_code == 200:
                 elements = response.json().get("elements", [])
                 
@@ -107,6 +147,49 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
         return []
         
     return []
+=======
+            if response.status_code != 200:
+                return []
+
+            elements = response.json().get("elements", [])
+            results = []
+
+            for e in elements:
+                if "tags" not in e or "name" not in e["tags"]:
+                    continue
+                tags = e["tags"]
+
+                # Extract coordinates — nodes have lat/lon directly,
+                # ways and relations have them nested under "center"
+                if e.get("type") == "node":
+                    biz_lat = e.get("lat")
+                    biz_lon = e.get("lon")
+                elif "center" in e:
+                    biz_lat = e["center"].get("lat")
+                    biz_lon = e["center"].get("lon")
+                else:
+                    print(f"  [OSM] Skipping '{tags.get('name')}' — no coordinates found")
+                    continue
+
+                if biz_lat is None or biz_lon is None:
+                    continue
+
+                distance_meters = haversine(lat, lon, biz_lat, biz_lon)
+                print(f"  [OSM] {tags.get('name')} — dist: {round(distance_meters)}m, category: {tags.get('amenity') or tags.get('shop')}")
+
+                results.append({
+                    "name": tags.get("name"),
+                    "category": tags.get("amenity") or tags.get("shop"),
+                    "distance_meters": round(distance_meters)
+                })
+
+            # Return more so the ranker has enough to work with
+            return results[:10]
+
+    except Exception as e:
+        print(f"  [OSM] Error fetching businesses: {e}")
+        return []
+>>>>>>> 02ed140 (added recommendation system and schedule uploader)
 
 @app.get("/")
 def read_root():
@@ -116,9 +199,107 @@ def read_root():
 def get_routes(db: Session = Depends(get_db)):
     return db.query(Route).all()
 
+<<<<<<< HEAD
 @app.get("/stops/", response_model=List[StopBase])
 def get_stops(db: Session = Depends(get_db)):
     return db.query(Stop).all()
+=======
+#from app.services.recommender import get_best_recommendation
+
+def parse_schedule_to_gaps(content):
+    cal = Calendar.from_ical(content)
+    events = []
+
+    def to_naive(dt):
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+    for component in cal.walk('vevent'):
+        loc = str(component.get('LOCATION', 'UNKNOWN'))
+        start = component.get('DTSTART').dt
+        end = component.get('DTEND').dt
+        if not isinstance(start, datetime):
+            continue
+        events.append({
+            "building": loc.split(' ')[0],
+            "start": to_naive(start),
+            "end": to_naive(end)
+        })
+
+    events.sort(key=lambda x: x['start'])
+    gaps = []
+    seen = set()
+
+    for i in range(len(events) - 1):
+        if events[i]['start'].date() != events[i+1]['start'].date():
+            continue
+        diff = (events[i+1]['start'] - events[i]['end']).total_seconds() / 60
+        if 15 < diff < 400:
+            key = (events[i]['building'], events[i]['end'].strftime("%H:%M"))
+            if key in seen:
+                continue
+            seen.add(key)
+            gaps.append({
+                "from_building": events[i]['building'],
+                "duration_minutes": round(diff),
+                "gap_start": events[i]['end'].strftime("%H:%M")
+            })
+
+    return gaps
+
+@app.post("/student/process-schedule")
+async def process_schedule(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    from app.constants import LANDMARKS
+
+    content = await file.read()
+    gaps = parse_schedule_to_gaps(content)
+    itinerary = []
+
+    for gap in gaps:
+        origin_bldg = gap['from_building'].upper()
+        stop_id = BUILDING_TO_STOP.get(origin_bldg)
+        if not stop_id:
+            continue
+
+        # 1. Fetch Coordinates
+        coord_sql = text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :sid LIMIT 1")
+        origin = db.execute(coord_sql, {"sid": stop_id}).fetchone()
+
+        # 2. Fetch walk spots from OSM
+        walk_spots = await get_osm_businesses(origin.stop_lat, origin.stop_lon, radius=900) if origin else []
+
+        # 3. Find bus routes to landmark destinations using the multi-transfer planner
+        bus_results = []
+        if gap['duration_minutes'] >= 120:
+            landmark_stop_ids = [k for k, v in LANDMARKS.items() if v["mode"] == "bus"]
+            for landmark_stop_id in landmark_stop_ids:
+                try:
+                    route = plan_multi_transfer(
+                        origin_stop_id=stop_id,
+                        dest_stop_id=landmark_stop_id,
+                        arrive_by=None,
+                        db=db
+                    )
+                    if isinstance(route, dict) and route.get("status") == "success":
+                        bus_results.append({
+                            "landmark_stop_id": landmark_stop_id,
+                            "landmark": LANDMARKS[landmark_stop_id],
+                            "path": route["path"]
+                        })
+                except Exception as e:
+                    print(f"  [BUS] No route found to {landmark_stop_id}: {e}")
+                    continue
+
+        # 4. Get best recommendation
+        best_move = get_best_recommendation(bus_results, walk_spots, gap['gap_start'], gap['duration_minutes'])
+
+        itinerary.append({
+            "gap": f"{gap['gap_start']} ({gap['duration_minutes']} min)",
+            "origin": origin_bldg,
+            "recommendation": best_move or "Stay put: Check the library."
+        })
+
+    return {"status": "success", "itinerary": itinerary}
+>>>>>>> 02ed140 (added recommendation system and schedule uploader)
 
 @app.get("/recommend/transit")
 async def recommend_transit(
@@ -130,10 +311,10 @@ async def recommend_transit(
 ):
     nearest_query = text("""
         SELECT stop_id, stop_name, 
-               ST_Distance(
-                   ST_MakePoint(stop_lon, stop_lat)\:\:geography,
-                   ST_MakePoint(:lon, :lat)\:\:geography
-               ) as meters
+                ST_Distance(
+                    ST_MakePoint(stop_lon, stop_lat)\:\:geography,
+                    ST_MakePoint(:lon, :lat)\:\:geography
+                ) as meters
         FROM stops
         ORDER BY meters ASC LIMIT 1
     """)
@@ -255,29 +436,6 @@ def plan_trip(origin_stop_id: str, dest_stop_id: str, db: Session = Depends(get_
 
 # Add to ZotRoute/zotroute-backend/app/main.py
 
-from collections import deque
-
-from datetime import datetime, time
-from typing import List, Optional  # <--- Add Optional here
-from collections import deque
-from datetime import datetime, time
-from collections import deque
-
-# Update in ZotRoute/zotroute-backend/app/main.py
-
-# Update in ZotRoute/zotroute-backend/app/main.py
-
-# Update in ZotRoute/zotroute-backend/app/main.py
-
-# Update in ZotRoute/zotroute-backend/app/main.py
-
-from fastapi import HTTPException, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from typing import Optional
-from collections import deque
-from datetime import datetime, time, timedelta
-
 @app.get("/plan_trip/multi-transfer")
 def plan_multi_transfer(
     origin_stop_id: str, 
@@ -335,7 +493,7 @@ def plan_multi_transfer(
             JOIN stops dest_s ON st2.stop_id = dest_s.stop_id
             WHERE tr.from_stop_id = :curr
               AND st1.stop_sequence < st2.stop_sequence
-            {{time_filter}}
+              {{time_filter}}
             {order_clause}
         """
 
@@ -429,10 +587,10 @@ def plan_trip_by_coords(
     def get_nearest_stop(lat: float, lon: float):
         query = text("""
             SELECT stop_id, stop_name,
-                   ST_Distance(
-                       ST_MakePoint(:lon, :lat)::geography,
-                       ST_MakePoint(stop_lon, stop_lat)::geography
-                   ) as walk_dist
+                    ST_Distance(
+                        ST_MakePoint(:lon, :lat)\:\:geography,
+                        ST_MakePoint(stop_lon, stop_lat)\:\:geography
+                    ) as walk_dist
             FROM stops
             ORDER BY walk_dist ASC
             LIMIT 1
@@ -497,7 +655,7 @@ def plan_trip_by_coords(
             JOIN stops dest_s ON st2.stop_id = dest_s.stop_id
             WHERE tr.from_stop_id = :curr
               AND st1.stop_sequence < st2.stop_sequence
-            {{time_filter}}
+              {{time_filter}}
             {order_clause}
         """
 
