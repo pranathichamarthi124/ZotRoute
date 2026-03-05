@@ -12,9 +12,17 @@ from app.models import Stop, Route, StopResponse
 from app.schemas import StopBase, RouteBase
 from app.constants import BUILDING_TO_STOP, STUDY_HUBS
 from app.services.recommender import get_best_recommendation
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI(title="ZotRoute API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"], # Allows your React frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 CAMPUS_ZONES = {
     "North": {"hub": "University Center", "buildings": ["HIB", "SSLH", "SSH", "HH", "DBH", "LLIB", "ALH"]},
@@ -577,7 +585,8 @@ def plan_trip_by_coords(
                 r.route_short_name,
                 st1.departure_time,
                 st2.arrival_time,
-                tr.walk_meters
+                tr.walk_meters,
+                st1.trip_id  -- <--- FIXED: Added the comma here!
             FROM transfers tr
             JOIN stop_times {{target_join}} ON tr.to_stop_id = {{target_join}}.stop_id
             JOIN stop_times {{other_join}} ON st1.trip_id = st2.trip_id
@@ -619,7 +628,10 @@ def plan_trip_by_coords(
                 "route": route_name,
                 "from": from_name,
                 "to": to_name,
-                "walk_meters": round(dist)
+                "from_id": prev_id,  # <--- ADD THIS LINE
+                "to_id": next_id,    # <--- ADD THIS LINE
+                "walk_meters": round(dist),
+                "trip_id": row.trip_id.strip() if hasattr(row, 'trip_id') and row.trip_id else None
             }
             
             if is_time_sensitive:
@@ -651,11 +663,9 @@ def plan_trip_by_coords(
             target_id = orig_stop_id if is_time_sensitive else dest_stop_id
             
             if next_search_id == target_id:
-                # --- Format the JSON to be a readable step-by-step itinerary ---
                 readable_itinerary = []
                 
                 for i, step in enumerate(new_path):
-                    # 1. Combine the starting GPS walk with the walk to the first bus
                     if i == 0:
                         total_start_walk = orig_walk_meters + step.get("walk_meters", 0)
                         if total_start_walk > 0:
@@ -664,7 +674,6 @@ def plan_trip_by_coords(
                                 "destination": step["from"],
                                 "distance_meters": total_start_walk
                             })
-                    # 1b. Handle walking between transfers
                     else:
                         if step.get("walk_meters", 0) > 0:
                             readable_itinerary.append({
@@ -673,12 +682,14 @@ def plan_trip_by_coords(
                                 "distance_meters": step["walk_meters"]
                             })
                     
-                    # 2. Add the Bus Ride
                     transit_leg = {
                         "action": "Ride Bus",
                         "route": step["route"],
                         "from": step["from"],
-                        "to": step["to"]
+                        "to": step["to"],
+                        "from_id": step.get("from_id"),  # <--- ADD THIS LINE
+                        "to_id": step.get("to_id"),      # <--- ADD THIS LINE
+                        "trip_id": step.get("trip_id")
                     }
                     if is_time_sensitive:
                         transit_leg["departure"] = step["departure"]
@@ -686,7 +697,6 @@ def plan_trip_by_coords(
                         
                     readable_itinerary.append(transit_leg)
 
-                # 3. Add the final walk from the last stop to the destination GPS
                 if dest_walk_meters > 0:
                     readable_itinerary.append({
                         "action": "Walk",
@@ -705,7 +715,88 @@ def plan_trip_by_coords(
                 queue.append((next_search_id, new_path, new_constraint_str))
 
     raise HTTPException(status_code=404, detail="No route found between these coordinates.")
-
 @app.get("/stops/", response_model=List[StopResponse])
-def get_stops(db: Session = Depends(get_db)):
-    return db.query(Stop).all()
+def get_stops(
+    min_lat: Optional[float] = None,
+    max_lat: Optional[float] = None,
+    min_lon: Optional[float] = None,
+    max_lon: Optional[float] = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(Stop)
+    
+    # If the frontend provides map bounds, filter the stops
+    if all(v is not None for v in [min_lat, max_lat, min_lon, max_lon]):
+        query = query.filter(
+            Stop.stop_lat >= min_lat,
+            Stop.stop_lat <= max_lat,
+            Stop.stop_lon >= min_lon,
+            Stop.stop_lon <= max_lon
+        )
+        
+    return query.all()
+
+import math
+
+@app.get("/shape/{trip_id}")
+def get_shape(trip_id: str, start_stop_id: Optional[str] = None, end_stop_id: Optional[str] = None, db: Session = Depends(get_db)):
+    # Helper function to calculate distance between two GPS coordinates
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371000
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlam = math.radians(lon2 - lon1)
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    # 1. Get the full shape
+    query_shape = text("""
+        SELECT s.shape_pt_lat, s.shape_pt_lon
+        FROM shapes s
+        JOIN trips t ON s.shape_id = t.shape_id
+        WHERE TRIM(t.trip_id) = TRIM(:trip_id)
+        ORDER BY s.shape_pt_sequence ASC
+    """)
+    shape_results = db.execute(query_shape, {"trip_id": trip_id}).fetchall()
+    
+    coordinates = []
+    
+    if shape_results:
+        coordinates = [[r.shape_pt_lon, r.shape_pt_lat] for r in shape_results]
+        
+        # 2. Slice the shape if we know where they are getting on and off!
+        if start_stop_id and end_stop_id and len(coordinates) > 0:
+            start_stop = db.execute(text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :id"), {"id": start_stop_id}).fetchone()
+            end_stop = db.execute(text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :id"), {"id": end_stop_id}).fetchone()
+            
+            if start_stop and end_stop:
+                # Find the shape points closest to the boarding and alighting stops
+                start_idx = min(range(len(coordinates)), key=lambda i: haversine(start_stop.stop_lat, start_stop.stop_lon, coordinates[i][1], coordinates[i][0]))
+                end_idx = min(range(len(coordinates)), key=lambda i: haversine(end_stop.stop_lat, end_stop.stop_lon, coordinates[i][1], coordinates[i][0]))
+                
+                # Slice the array so it only contains the path they ride
+                if start_idx <= end_idx:
+                    coordinates = coordinates[start_idx:end_idx+1]
+                else:
+                    coordinates = coordinates[end_idx:start_idx+1] # Fallback in case the loop goes backwards
+    else:
+        # Fallback to connect-the-dots if shapes.txt data is missing
+        query_stops = text("""
+            SELECT s.stop_lon, s.stop_lat
+            FROM stop_times st
+            JOIN stops s ON TRIM(st.stop_id) = TRIM(s.stop_id)
+            WHERE TRIM(st.trip_id) = TRIM(:trip_id)
+            ORDER BY st.stop_sequence ASC
+        """)
+        stop_results = db.execute(query_stops, {"trip_id": trip_id}).fetchall()
+        if not stop_results:
+            raise HTTPException(status_code=404, detail="Shape not found")
+        coordinates = [[r.stop_lon, r.stop_lat] for r in stop_results]
+
+    return {
+        "type": "Feature",
+        "geometry": {
+            "type": "LineString",
+            "coordinates": coordinates
+        }
+    }
