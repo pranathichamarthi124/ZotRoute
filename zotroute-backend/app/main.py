@@ -1,24 +1,26 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from typing import List, Optional, Dict, Any
-import httpx
+import math
 from datetime import datetime, timedelta, time
 from collections import deque
+from typing import List, Optional
+
+import httpx
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 from icalendar import Calendar
-import re
+
 from app.init_db import SessionLocal
 from app.models import Stop, Route, StopResponse
-from app.schemas import StopBase, RouteBase
-from app.constants import BUILDING_TO_STOP, STUDY_HUBS
+from app.schemas import RouteBase
+from app.constants import BUILDING_TO_STOP
 from app.services.recommender import get_best_recommendation
-from fastapi.middleware.cors import CORSMiddleware
-
 
 app = FastAPI(title="ZotRoute API")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], # Allows your React frontend
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,8 +46,6 @@ def get_db():
         db.close()
 
 async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str] = None, radius: int = 900):
-    import math
-
     def haversine(lat1, lon1, lat2, lon2):
         R = 6371000
         phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -56,7 +56,6 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
 
     overpass_url = "https://overpass-api.de/api/interpreter"
     
-    # 1. Dynamically build the OSM query conditions
     query_body = ""
     
     if business_type:
@@ -76,13 +75,11 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
             nwr["shop"~"(?i){bt}"](around:300,{lat},{lon});
             """
     else:
-        # Default fallback
         query_body = f"""
         nwr["amenity"~"restaurant|cafe|fast_food|bar"](around:300,{lat},{lon});
         nwr["shop"](around:300,{lat},{lon});
         """
 
-    # We use "out center;" so Overpass calculates the center coordinate of large buildings
     query = f"""
     [out:json];
     (
@@ -106,8 +103,6 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
                     continue
                 tags = e["tags"]
 
-                # Extract coordinates — nodes have lat/lon directly,
-                # ways and relations have them nested under "center"
                 if e.get("type") == "node":
                     biz_lat = e.get("lat")
                     biz_lon = e.get("lon")
@@ -115,14 +110,12 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
                     biz_lat = e["center"].get("lat")
                     biz_lon = e["center"].get("lon")
                 else:
-                    print(f"  [OSM] Skipping '{tags.get('name')}' — no coordinates found")
                     continue
 
                 if biz_lat is None or biz_lon is None:
                     continue
 
                 distance_meters = haversine(lat, lon, biz_lat, biz_lon)
-                print(f"  [OSM] {tags.get('name')} — dist: {round(distance_meters)}m, category: {tags.get('amenity') or tags.get('shop')}")
 
                 results.append({
                     "name": tags.get("name"),
@@ -130,11 +123,9 @@ async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str
                     "distance_meters": round(distance_meters)
                 })
 
-            # Return more so the ranker has enough to work with
             return results[:10]
 
-    except Exception as e:
-        print(f"  [OSM] Error fetching businesses: {e}")
+    except Exception:
         return []
 
 @app.get("/")
@@ -144,8 +135,6 @@ def read_root():
 @app.get("/routes/", response_model=List[RouteBase])
 def get_routes(db: Session = Depends(get_db)):
     return db.query(Route).all()
-
-#from app.services.recommender import get_best_recommendation
 
 def parse_schedule_to_gaps(content):
     cal = Calendar.from_ical(content)
@@ -201,14 +190,11 @@ async def process_schedule(file: UploadFile = File(...), db: Session = Depends(g
         if not stop_id:
             continue
 
-        # 1. Fetch Coordinates
         coord_sql = text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :sid LIMIT 1")
         origin = db.execute(coord_sql, {"sid": stop_id}).fetchone()
 
-        # 2. Fetch walk spots from OSM
         walk_spots = await get_osm_businesses(origin.stop_lat, origin.stop_lon, radius=900) if origin else []
 
-        # 3. Find bus routes to landmark destinations using the multi-transfer planner
         bus_results = []
         if gap['duration_minutes'] >= 120:
             landmark_stop_ids = [k for k, v in LANDMARKS.items() if v["mode"] == "bus"]
@@ -226,11 +212,9 @@ async def process_schedule(file: UploadFile = File(...), db: Session = Depends(g
                             "landmark": LANDMARKS[landmark_stop_id],
                             "path": route["path"]
                         })
-                except Exception as e:
-                    print(f"  [BUS] No route found to {landmark_stop_id}: {e}")
+                except Exception:
                     continue
 
-        # 4. Get best recommendation
         best_move = get_best_recommendation(bus_results, walk_spots, gap['gap_start'], gap['duration_minutes'])
 
         itinerary.append({
@@ -310,7 +294,7 @@ async def recommend_transit(
 @app.get("/recommend/explore")
 async def explore_nearby(
     stop_id: str, 
-    business_type: Optional[str] = None, # <-- Added optional filter
+    business_type: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     stop_query = text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :id")
@@ -322,11 +306,8 @@ async def explore_nearby(
     nearby = await get_osm_businesses(stop.stop_lat, stop.stop_lon, business_type)
     return {"stop_id": stop_id, "filter_applied": business_type, "nearby_businesses": nearby}
 
-# Add this to ZotRoute/zotroute-backend/app/main.py
-
 @app.get("/plan_trip")
 def plan_trip(origin_stop_id: str, dest_stop_id: str, db: Session = Depends(get_db)):
-    # This query finds all trips that hit BOTH stops, regardless of order
     query = text("""
         SELECT 
             st1.trip_id,
@@ -352,7 +333,6 @@ def plan_trip(origin_stop_id: str, dest_stop_id: str, db: Session = Depends(get_
 
     itinerary = []
     for r in results:
-        # Scenario A: Direct (Normal sequence)
         if r.origin_seq < r.dest_seq:
             itinerary.append({
                 "route": r.route_short_name,
@@ -361,7 +341,6 @@ def plan_trip(origin_stop_id: str, dest_stop_id: str, db: Session = Depends(get_
                 "arrive": r.arrival_time.strip(),
                 "trip_id": r.trip_id
             })
-        # Scenario B: Looping (The bus goes to the end and restarts)
         else:
             itinerary.append({
                 "route": r.route_short_name,
@@ -371,10 +350,7 @@ def plan_trip(origin_stop_id: str, dest_stop_id: str, db: Session = Depends(get_
                 "trip_id": r.trip_id
             })
 
-    # Return the first 5 options
     return itinerary[:5]
-
-# Add to ZotRoute/zotroute-backend/app/main.py
 
 @app.get("/plan_trip/multi-transfer")
 def plan_multi_transfer(
@@ -413,7 +389,6 @@ def plan_multi_transfer(
 
         order_clause = "ORDER BY st2.arrival_time DESC" if is_time_sensitive else "ORDER BY st1.departure_time ASC"
 
-        # The optimized query using the pre-computed 'transfers' table
         query_sql = f"""
             SELECT DISTINCT
                 st1.stop_id AS prev_id,
@@ -446,8 +421,7 @@ def plan_multi_transfer(
 
         try:
             results = db.execute(full_query, {"curr": curr_id, "constraint": current_constraint}).fetchall()
-        except Exception as e:
-            print(f"SQL Error: {e}")
+        except Exception:
             continue
 
         for row in results:
@@ -513,7 +487,6 @@ def plan_multi_transfer(
 
     raise HTTPException(status_code=404, detail="No route found.")
 
-
 @app.get("/plan_trip/coordinates")
 def plan_trip_by_coords(
     origin_lat: float,
@@ -523,7 +496,6 @@ def plan_trip_by_coords(
     arrive_by: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    # --- Helper: Find Nearest Stop ---
     def get_nearest_stop(lat: float, lon: float):
         query = text("""
             SELECT stop_id, stop_name,
@@ -543,7 +515,6 @@ def plan_trip_by_coords(
     orig_stop_id, orig_stop_name, orig_walk_meters = get_nearest_stop(origin_lat, origin_lon)
     dest_stop_id, dest_stop_name, dest_walk_meters = get_nearest_stop(dest_lat, dest_lon)
 
-    # --- Helper: Time Parsers ---
     def parse_time_str(t_str):
         if not t_str: return None
         t_str = t_str.strip()
@@ -560,7 +531,6 @@ def plan_trip_by_coords(
             return time(h % 24, m, s)
         except: return time(0,0,0)
 
-    # --- Setup Search ---
     deadline_str = parse_time_str(arrive_by)
     is_time_sensitive = deadline_str is not None
 
@@ -569,7 +539,6 @@ def plan_trip_by_coords(
     visited = {start_node}
     max_depth = 4 
 
-    # --- BFS Algorithm ---
     while queue:
         curr_id, path, current_constraint = queue.popleft()
         if len(path) >= max_depth: continue
@@ -586,7 +555,7 @@ def plan_trip_by_coords(
                 st1.departure_time,
                 st2.arrival_time,
                 tr.walk_meters,
-                st1.trip_id  -- <--- FIXED: Added the comma here!
+                st1.trip_id
             FROM transfers tr
             JOIN stop_times {{target_join}} ON tr.to_stop_id = {{target_join}}.stop_id
             JOIN stop_times {{other_join}} ON st1.trip_id = st2.trip_id
@@ -609,7 +578,7 @@ def plan_trip_by_coords(
 
         try:
             results = db.execute(full_query, {"curr": curr_id, "constraint": current_constraint}).fetchall()
-        except Exception as e:
+        except Exception:
             continue
 
         for row in results:
@@ -628,8 +597,8 @@ def plan_trip_by_coords(
                 "route": route_name,
                 "from": from_name,
                 "to": to_name,
-                "from_id": prev_id,  # <--- ADD THIS LINE
-                "to_id": next_id,    # <--- ADD THIS LINE
+                "from_id": prev_id,
+                "to_id": next_id,
                 "walk_meters": round(dist),
                 "trip_id": row.trip_id.strip() if hasattr(row, 'trip_id') and row.trip_id else None
             }
@@ -687,8 +656,8 @@ def plan_trip_by_coords(
                         "route": step["route"],
                         "from": step["from"],
                         "to": step["to"],
-                        "from_id": step.get("from_id"),  # <--- ADD THIS LINE
-                        "to_id": step.get("to_id"),      # <--- ADD THIS LINE
+                        "from_id": step.get("from_id"),
+                        "to_id": step.get("to_id"),
                         "trip_id": step.get("trip_id")
                     }
                     if is_time_sensitive:
@@ -715,6 +684,7 @@ def plan_trip_by_coords(
                 queue.append((next_search_id, new_path, new_constraint_str))
 
     raise HTTPException(status_code=404, detail="No route found between these coordinates.")
+
 @app.get("/stops/", response_model=List[StopResponse])
 def get_stops(
     min_lat: Optional[float] = None,
@@ -725,7 +695,6 @@ def get_stops(
 ):
     query = db.query(Stop)
     
-    # If the frontend provides map bounds, filter the stops
     if all(v is not None for v in [min_lat, max_lat, min_lon, max_lon]):
         query = query.filter(
             Stop.stop_lat >= min_lat,
@@ -736,62 +705,58 @@ def get_stops(
         
     return query.all()
 
-import math
-
 @app.get("/shape/{trip_id}")
 def get_shape(trip_id: str, start_stop_id: Optional[str] = None, end_stop_id: Optional[str] = None, db: Session = Depends(get_db)):
-    # Helper function to calculate distance between two GPS coordinates
     def haversine(lat1, lon1, lat2, lon2):
         R = 6371000
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlam = math.radians(lon2 - lon1)
+        phi1, phi2 = math.radians(float(lat1)), math.radians(float(lat2))
+        dphi = math.radians(float(lat2) - float(lat1))
+        dlam = math.radians(float(lon2) - float(lon1))
         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    # 1. Get the full shape
     query_shape = text("""
-        SELECT s.shape_pt_lat, s.shape_pt_lon
+        SELECT CAST(s.shape_pt_lat AS FLOAT) as lat, 
+               CAST(s.shape_pt_lon AS FLOAT) as lon
         FROM shapes s
         JOIN trips t ON s.shape_id = t.shape_id
         WHERE TRIM(t.trip_id) = TRIM(:trip_id)
-        ORDER BY s.shape_pt_sequence ASC
+        ORDER BY CAST(s.shape_pt_sequence AS INTEGER) ASC
     """)
     shape_results = db.execute(query_shape, {"trip_id": trip_id}).fetchall()
     
     coordinates = []
     
     if shape_results:
-        coordinates = [[r.shape_pt_lon, r.shape_pt_lat] for r in shape_results]
+        coordinates = [[r.lon, r.lat] for r in shape_results]
         
-        # 2. Slice the shape if we know where they are getting on and off!
         if start_stop_id and end_stop_id and len(coordinates) > 0:
-            start_stop = db.execute(text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :id"), {"id": start_stop_id}).fetchone()
-            end_stop = db.execute(text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :id"), {"id": end_stop_id}).fetchone()
+            start_stop = db.execute(text("SELECT CAST(stop_lat AS FLOAT) as lat, CAST(stop_lon AS FLOAT) as lon FROM stops WHERE TRIM(stop_id) = :id"), {"id": start_stop_id}).fetchone()
+            end_stop = db.execute(text("SELECT CAST(stop_lat AS FLOAT) as lat, CAST(stop_lon AS FLOAT) as lon FROM stops WHERE TRIM(stop_id) = :id"), {"id": end_stop_id}).fetchone()
             
             if start_stop and end_stop:
-                # Find the shape points closest to the boarding and alighting stops
-                start_idx = min(range(len(coordinates)), key=lambda i: haversine(start_stop.stop_lat, start_stop.stop_lon, coordinates[i][1], coordinates[i][0]))
-                end_idx = min(range(len(coordinates)), key=lambda i: haversine(end_stop.stop_lat, end_stop.stop_lon, coordinates[i][1], coordinates[i][0]))
+                start_idx = min(range(len(coordinates)), key=lambda i: haversine(start_stop.lat, start_stop.lon, coordinates[i][1], coordinates[i][0]))
+                end_idx = min(range(len(coordinates)), key=lambda i: haversine(end_stop.lat, end_stop.lon, coordinates[i][1], coordinates[i][0]))
                 
-                # Slice the array so it only contains the path they ride
                 if start_idx <= end_idx:
                     coordinates = coordinates[start_idx:end_idx+1]
                 else:
-                    coordinates = coordinates[end_idx:start_idx+1] # Fallback in case the loop goes backwards
+                    coordinates = coordinates[start_idx:] + coordinates[:end_idx+1]
     else:
-        # Fallback to connect-the-dots if shapes.txt data is missing
         query_stops = text("""
-            SELECT s.stop_lon, s.stop_lat
+            SELECT CAST(s.stop_lon AS FLOAT) as lon, CAST(s.stop_lat AS FLOAT) as lat
             FROM stop_times st
             JOIN stops s ON TRIM(st.stop_id) = TRIM(s.stop_id)
             WHERE TRIM(st.trip_id) = TRIM(:trip_id)
-            ORDER BY st.stop_sequence ASC
+            ORDER BY CAST(st.stop_sequence AS INTEGER) ASC
         """)
         stop_results = db.execute(query_stops, {"trip_id": trip_id}).fetchall()
         if not stop_results:
             raise HTTPException(status_code=404, detail="Shape not found")
-        coordinates = [[r.stop_lon, r.stop_lat] for r in stop_results]
+        coordinates = [[r.lon, r.lat] for r in stop_results]
+
+    if len(coordinates) == 1:
+        coordinates.append(coordinates[0])
 
     return {
         "type": "Feature",
