@@ -8,10 +8,66 @@ from collections import deque
 from icalendar import Calendar
 import re
 from app.init_db import SessionLocal
-from app.models import Stop, Route, StopResponse
+from app.models import Stop, Route, User, UserPreferences
 from app.schemas import StopBase, RouteBase
 from app.constants import BUILDING_TO_STOP, STUDY_HUBS
 from app.services.recommender import get_best_recommendation
+
+from app.models import User, UserPreferences
+from app.schemas import LoginRequest, UserPreferencesRequest, UserPreferencesResponse
+
+# --- Auth ---
+@app.post("/auth/login")
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.user_id == request.user_id).first()
+    if not user:
+        # First time — create the user
+        user = User(user_id=request.user_id)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return {"user_id": user.user_id, "status": "created"}
+    return {"user_id": user.user_id, "status": "logged_in"}
+
+
+# --- User Preferences ---
+@app.post("/user/preferences")
+def set_preferences(
+    user_id: str,
+    preferences: UserPreferencesRequest,
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found. Please login first.")
+
+    existing = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+    if existing:
+        existing.dining_styles = preferences.dining_styles
+        existing.cuisines = preferences.cuisines
+        existing.dietary_restrictions = preferences.dietary_restrictions
+        existing.study_amenities_ranked = preferences.study_amenities_ranked
+    else:
+        new_prefs = UserPreferences(
+            user_id=user_id,
+            dining_styles=preferences.dining_styles,
+            cuisines=preferences.cuisines,
+            dietary_restrictions=preferences.dietary_restrictions,
+            study_amenities_ranked=preferences.study_amenities_ranked
+        )
+        db.add(new_prefs)
+
+    db.commit()
+    return {"status": "saved", "user_id": user_id}
+
+
+@app.get("/user/preferences/{user_id}", response_model=UserPreferencesResponse)
+def get_preferences(user_id: str, db: Session = Depends(get_db)):
+    prefs = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+    if not prefs:
+        raise HTTPException(status_code=404, detail="No preferences found for this user.")
+    return prefs
+
 
 
 app = FastAPI(title="ZotRoute API")
@@ -180,8 +236,17 @@ def parse_schedule_to_gaps(content):
     return gaps
 
 @app.post("/student/process-schedule")
-async def process_schedule(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def process_schedule(
+    file: UploadFile = File(...),
+    user_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     from app.constants import LANDMARKS
+
+    # Load user preferences if user_id provided
+    user_prefs = None
+    if user_id:
+        user_prefs = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
 
     content = await file.read()
     gaps = parse_schedule_to_gaps(content)
@@ -193,14 +258,11 @@ async def process_schedule(file: UploadFile = File(...), db: Session = Depends(g
         if not stop_id:
             continue
 
-        # 1. Fetch Coordinates
         coord_sql = text("SELECT stop_lat, stop_lon FROM stops WHERE TRIM(stop_id) = :sid LIMIT 1")
         origin = db.execute(coord_sql, {"sid": stop_id}).fetchone()
 
-        # 2. Fetch walk spots from OSM
         walk_spots = await get_osm_businesses(origin.stop_lat, origin.stop_lon, radius=900) if origin else []
 
-        # 3. Find bus routes to landmark destinations using the multi-transfer planner
         bus_results = []
         if gap['duration_minutes'] >= 120:
             landmark_stop_ids = [k for k, v in LANDMARKS.items() if v["mode"] == "bus"]
@@ -222,8 +284,10 @@ async def process_schedule(file: UploadFile = File(...), db: Session = Depends(g
                     print(f"  [BUS] No route found to {landmark_stop_id}: {e}")
                     continue
 
-        # 4. Get best recommendation
-        best_move = get_best_recommendation(bus_results, walk_spots, gap['gap_start'], gap['duration_minutes'])
+        best_move = get_best_recommendation(
+            bus_results, walk_spots, gap['gap_start'], gap['duration_minutes'],
+            user_prefs=user_prefs
+        )
 
         itinerary.append({
             "gap": f"{gap['gap_start']} ({gap['duration_minutes']} min)",
