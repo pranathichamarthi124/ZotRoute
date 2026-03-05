@@ -1,12 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-<<<<<<< HEAD
-from typing import List
-from typing import Optional
-=======
 from typing import List, Optional, Dict, Any
->>>>>>> 02ed140 (added recommendation system and schedule uploader)
 import httpx
 from datetime import datetime, timedelta, time
 from collections import deque
@@ -41,17 +36,6 @@ def get_db():
     finally:
         db.close()
 
-<<<<<<< HEAD
-async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str] = None):
-    # --- Helper: Calculate Distance between two GPS coordinates ---
-    def calculate_distance(lat1, lon1, lat2, lon2):
-        R = 6371000  # Radius of Earth in meters
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlam = math.radians(lon2 - lon1)
-        a = math.sin(dphi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam/2)**2
-        return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
-=======
 async def get_osm_businesses(lat: float, lon: float, radius: int = 1200):
     import math
 
@@ -62,7 +46,6 @@ async def get_osm_businesses(lat: float, lon: float, radius: int = 1200):
         dlam = math.radians(lon2 - lon1)
         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
->>>>>>> 02ed140 (added recommendation system and schedule uploader)
 
     overpass_url = "https://overpass-api.de/api/interpreter"
     
@@ -96,12 +79,8 @@ async def get_osm_businesses(lat: float, lon: float, radius: int = 1200):
     query = f"""
     [out:json];
     (
-<<<<<<< HEAD
-      {query_body}
-=======
       nwr["amenity"~"restaurant|cafe|fast_food|food_court"](around:{radius},{lat},{lon});
       nwr["shop"~"mall|supermarket|convenience"](around:{radius},{lat},{lon});
->>>>>>> 02ed140 (added recommendation system and schedule uploader)
     );
     out center;
     """
@@ -109,45 +88,6 @@ async def get_osm_businesses(lat: float, lon: float, radius: int = 1200):
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(overpass_url, data={'data': query}, timeout=5.0)
-<<<<<<< HEAD
-            if response.status_code == 200:
-                elements = response.json().get("elements", [])
-                
-                parsed_businesses = []
-                for e in elements:
-                    # Skip if it doesn't have a name
-                    if "tags" not in e or "name" not in e["tags"]:
-                        continue
-                    
-                    # 2. Extract Coordinates
-                    # Nodes have 'lat' and 'lon'. Ways (buildings) have a 'center' object.
-                    b_lat = e.get("lat") or e.get("center", {}).get("lat")
-                    b_lon = e.get("lon") or e.get("center", {}).get("lon")
-                    
-                    if not b_lat or not b_lon:
-                        continue
-                        
-                    # 3. Calculate Distance
-                    dist = calculate_distance(lat, lon, b_lat, b_lon)
-                    
-                    parsed_businesses.append({
-                        "name": e["tags"]["name"],
-                        "category": e["tags"].get("amenity") or e["tags"].get("shop") or e["tags"].get("leisure", "business"),
-                        "distance_meters": round(dist)
-                    })
-                
-                # 4. Sort the list by distance (closest first)
-                parsed_businesses.sort(key=lambda x: x["distance_meters"])
-                
-                # 5. Return the top 5 closest
-                return parsed_businesses[:5]
-                
-    except Exception as e:
-        print(f"Overpass Error: {e}")
-        return []
-        
-    return []
-=======
             if response.status_code != 200:
                 return []
 
@@ -189,7 +129,6 @@ async def get_osm_businesses(lat: float, lon: float, radius: int = 1200):
     except Exception as e:
         print(f"  [OSM] Error fetching businesses: {e}")
         return []
->>>>>>> 02ed140 (added recommendation system and schedule uploader)
 
 @app.get("/")
 def read_root():
@@ -199,11 +138,6 @@ def read_root():
 def get_routes(db: Session = Depends(get_db)):
     return db.query(Route).all()
 
-<<<<<<< HEAD
-@app.get("/stops/", response_model=List[StopBase])
-def get_stops(db: Session = Depends(get_db)):
-    return db.query(Stop).all()
-=======
 #from app.services.recommender import get_best_recommendation
 
 def parse_schedule_to_gaps(content):
@@ -299,7 +233,6 @@ async def process_schedule(file: UploadFile = File(...), db: Session = Depends(g
         })
 
     return {"status": "success", "itinerary": itinerary}
->>>>>>> 02ed140 (added recommendation system and schedule uploader)
 
 @app.get("/recommend/transit")
 async def recommend_transit(
