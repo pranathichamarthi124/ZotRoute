@@ -7,9 +7,8 @@ from datetime import datetime, timedelta, time
 from collections import deque
 from icalendar import Calendar
 import re
-
 from app.init_db import SessionLocal
-from app.models import Stop, Route
+from app.models import Stop, Route, StopResponse
 from app.schemas import StopBase, RouteBase
 from app.constants import BUILDING_TO_STOP, STUDY_HUBS
 from app.services.recommender import get_best_recommendation
@@ -706,3 +705,7 @@ def plan_trip_by_coords(
                 queue.append((next_search_id, new_path, new_constraint_str))
 
     raise HTTPException(status_code=404, detail="No route found between these coordinates.")
+
+@app.get("/stops/", response_model=List[StopResponse])
+def get_stops(db: Session = Depends(get_db)):
+    return db.query(Stop).all()

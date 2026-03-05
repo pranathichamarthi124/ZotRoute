@@ -1,7 +1,8 @@
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, Time, Date
 from sqlalchemy.orm import relationship, declarative_base
 from geoalchemy2 import Geometry
-
+from typing import List, Optional
+from pydantic import BaseModel
 Base = declarative_base()
 
 # Add to ZotRoute/zotroute-backend/app/models.py
@@ -67,3 +68,13 @@ class Shape(Base):
     shape_pt_lat = Column(Float)
     shape_pt_lon = Column(Float)
     shape_pt_sequence = Column(Integer, primary_key=True)
+
+class StopResponse(BaseModel):
+    stop_id: str
+    stop_code: Optional[str] = None
+    stop_name: str
+    stop_lat: float
+    stop_lon: float
+
+    class Config:
+        from_attributes = True
