@@ -35,7 +35,7 @@ def get_db():
     finally:
         db.close()
 
-async def get_osm_businesses(lat: float, lon: float, radius: int = 1200):
+async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str] = None, radius: int = 900):
     import math
 
     def haversine(lat1, lon1, lat2, lon2):
