@@ -319,6 +319,10 @@ function MapView({ filter }) {
       <Map
         ref={mapRef}
         initialViewState={{ longitude: -117.8425, latitude: 33.647, zoom: 14.5 }}
+        maxBounds={[
+          [-118.2500, 33.3500],
+          [-117.4000, 33.9500] 
+        ]}
         style={{ width: "100vw", height: "100vh" }}
         mapStyle="mapbox://styles/mapbox/streets-v12"
         mapboxAccessToken={MAPBOX_TOKEN}
