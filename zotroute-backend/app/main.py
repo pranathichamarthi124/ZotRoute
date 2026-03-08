@@ -2,6 +2,7 @@ import math
 from datetime import datetime, timedelta, time
 from collections import deque
 from typing import List, Optional
+import heapq
 
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
@@ -45,88 +46,46 @@ def get_db():
     finally:
         db.close()
 
-async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str] = None, radius: int = 900):
-    def haversine(lat1, lon1, lat2, lon2):
-        R = 6371000
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlam = math.radians(lon2 - lon1)
-        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    overpass_url = "https://overpass-api.de/api/interpreter"
+async def get_osm_businesses(lat: float, lon: float, business_type: Optional[str] = None, radius: int = 1200, db: Session = Depends(get_db)):
     
-    query_body = ""
-    
+    cat_filter = ""
     if business_type:
         bt = business_type.lower().strip()
-        if bt in ["food", "restaurant", "restaurants"]:
-            query_body = f'nwr["amenity"~"restaurant|fast_food|food_court"](around:300,{lat},{lon});'
-        elif bt in ["coffee", "cafe", "boba"]:
-            query_body = f'nwr["amenity"="cafe"](around:300,{lat},{lon});'
+        if bt in ["coffee", "cafe", "boba"]:
+            cat_filter = "AND category = 'cafe'"
+        elif bt in ["food", "restaurant", "restaurants"]:
+            cat_filter = "AND category = 'food'"
         elif bt in ["shop", "shopping", "store", "retail"]:
-            query_body = f'nwr["shop"](around:300,{lat},{lon});'
+            cat_filter = "AND category = 'shop'"
         elif bt in ["bar", "pubs", "nightlife"]:
-            query_body = f'nwr["amenity"~"bar|pub"](around:300,{lat},{lon});'
-        else:
-            query_body = f"""
-            nwr["name"~"(?i){bt}"](around:300,{lat},{lon});
-            nwr["amenity"~"(?i){bt}"](around:300,{lat},{lon});
-            nwr["shop"~"(?i){bt}"](around:300,{lat},{lon});
-            """
-    else:
-        query_body = f"""
-        nwr["amenity"~"restaurant|cafe|fast_food|bar"](around:300,{lat},{lon});
-        nwr["shop"](around:300,{lat},{lon});
-        """
+            cat_filter = "AND category = 'bar'"
 
-    query = f"""
-    [out:json];
-    (
-      nwr["amenity"~"restaurant|cafe|fast_food|food_court"](around:{radius},{lat},{lon});
-      nwr["shop"~"mall|supermarket|convenience"](around:{radius},{lat},{lon});
-    );
-    out center;
-    """
+    query = text(f"""
+        SELECT name, category, lat, lon,
+                ST_Distance(
+                    ST_MakePoint(:lon, :lat)\:\:geography,
+                    ST_MakePoint(lon, lat)\:\:geography
+                ) as distance_meters
+        FROM businesses
+        WHERE 1=1 {cat_filter}
+        ORDER BY distance_meters ASC
+        LIMIT 10
+    """)
     
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(overpass_url, data={'data': query}, timeout=5.0)
-            if response.status_code != 200:
-                return []
+    results = db.execute(query, {"lat": lat, "lon": lon}).fetchall()
 
-            elements = response.json().get("elements", [])
-            results = []
-
-            for e in elements:
-                if "tags" not in e or "name" not in e["tags"]:
-                    continue
-                tags = e["tags"]
-
-                if e.get("type") == "node":
-                    biz_lat = e.get("lat")
-                    biz_lon = e.get("lon")
-                elif "center" in e:
-                    biz_lat = e["center"].get("lat")
-                    biz_lon = e["center"].get("lon")
-                else:
-                    continue
-
-                if biz_lat is None or biz_lon is None:
-                    continue
-
-                distance_meters = haversine(lat, lon, biz_lat, biz_lon)
-
-                results.append({
-                    "name": tags.get("name"),
-                    "category": tags.get("amenity") or tags.get("shop"),
-                    "distance_meters": round(distance_meters)
-                })
-
-            return results[:10]
-
-    except Exception:
-        return []
+    final_data = []
+    for r in results:
+        if r.distance_meters <= radius:
+            final_data.append({
+                "name": r.name,
+                "category": r.category,
+                "distance_meters": round(r.distance_meters),
+                "lat": r.lat,
+                "lon": r.lon
+            })
+            
+    return final_data
 
 @app.get("/")
 def read_root():
@@ -303,7 +262,7 @@ async def explore_nearby(
     if not stop:
         raise HTTPException(status_code=404, detail="Stop not found.")
         
-    nearby = await get_osm_businesses(stop.stop_lat, stop.stop_lon, business_type)
+    nearby = await get_osm_businesses(stop.stop_lat, stop.stop_lon, business_type, radius=1200, db=db)
     return {"stop_id": stop_id, "filter_applied": business_type, "nearby_businesses": nearby}
 
 @app.get("/plan_trip")
@@ -487,6 +446,13 @@ def plan_multi_transfer(
 
     raise HTTPException(status_code=404, detail="No route found.")
 
+import heapq
+import math
+
+import heapq
+import math
+from datetime import datetime, timedelta, time
+
 @app.get("/plan_trip/coordinates")
 def plan_trip_by_coords(
     origin_lat: float,
@@ -496,24 +462,48 @@ def plan_trip_by_coords(
     arrive_by: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    def get_nearest_stop(lat: float, lon: float):
+    # --- Helper: Haversine Distance ---
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371000
+        phi1, phi2 = math.radians(float(lat1)), math.radians(float(lat2))
+        dphi = math.radians(float(lat2) - float(lat1))
+        dlam = math.radians(float(lon2) - float(lon1))
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    # 1. IMMEDIATE WALK CHECK (< 700 meters)
+    direct_dist = haversine(origin_lat, origin_lon, dest_lat, dest_lon)
+    if direct_dist <= 700:
+        return {
+            "status": "success",
+            "mode": "walk-only",
+            "itinerary": [{
+                "action": "Walk",
+                "destination": "Final Destination",
+                "distance_meters": round(direct_dist),
+                "walk_time_minutes": math.ceil(direct_dist / 84) 
+            }]
+        }
+
+    # 2. SEED MULTIPLE STARTING STOPS (Prevents Nearest-Stop Transfer Bias)
+    def get_nearby_stops(lat: float, lon: float):
         query = text("""
-            SELECT stop_id, stop_name,
+            SELECT stop_id, stop_name, stop_lat, stop_lon,
                     ST_Distance(
                         ST_MakePoint(:lon, :lat)\:\:geography,
                         ST_MakePoint(stop_lon, stop_lat)\:\:geography
                     ) as walk_dist
             FROM stops
             ORDER BY walk_dist ASC
-            LIMIT 1
+            LIMIT 4
         """)
-        result = db.execute(query, {"lat": lat, "lon": lon}).fetchone()
-        if not result:
-            raise HTTPException(status_code=404, detail="No transit stops found near these coordinates.")
-        return result.stop_id.strip(), result.stop_name, round(result.walk_dist)
+        return db.execute(query, {"lat": lat, "lon": lon}).fetchall()
 
-    orig_stop_id, orig_stop_name, orig_walk_meters = get_nearest_stop(origin_lat, origin_lon)
-    dest_stop_id, dest_stop_name, dest_walk_meters = get_nearest_stop(dest_lat, dest_lon)
+    orig_stops = get_nearby_stops(origin_lat, origin_lon)
+    dest_stops = get_nearby_stops(dest_lat, dest_lon)
+
+    if not orig_stops or not dest_stops:
+        raise HTTPException(status_code=404, detail="No transit stops found near these coordinates.")
 
     def parse_time_str(t_str):
         if not t_str: return None
@@ -534,13 +524,26 @@ def plan_trip_by_coords(
     deadline_str = parse_time_str(arrive_by)
     is_time_sensitive = deadline_str is not None
 
-    start_node = dest_stop_id if is_time_sensitive else orig_stop_id
-    queue = deque([(start_node, [], deadline_str if is_time_sensitive else None)])
-    visited = {start_node}
+    start_stops = dest_stops if is_time_sensitive else orig_stops
+    target_stops = orig_stops if is_time_sensitive else dest_stops
+    target_ids = {s.stop_id.strip(): s for s in target_stops}
+    
+    queue = []
+    best_costs = {}
     max_depth = 4 
 
+    # Push ALL 4 nearby stops into the queue
+    for s_stop in start_stops:
+        s_id = s_stop.stop_id.strip()
+        s_g = s_stop.walk_dist
+        s_h = haversine(s_stop.stop_lat, s_stop.stop_lon, target_stops[0].stop_lat, target_stops[0].stop_lon)
+        
+        heapq.heappush(queue, (s_g + s_h, s_g, s_id, [], deadline_str, s_stop.walk_dist))
+        best_costs[s_id] = s_g
+
     while queue:
-        curr_id, path, current_constraint = queue.popleft()
+        f, g, curr_id, path, current_constraint, initial_walk = heapq.heappop(queue)
+        
         if len(path) >= max_depth: continue
 
         order_clause = "ORDER BY st2.arrival_time DESC" if is_time_sensitive else "ORDER BY st1.departure_time ASC"
@@ -551,6 +554,8 @@ def plan_trip_by_coords(
                 st2.stop_id AS next_id,
                 orig_s.stop_name AS from_name,
                 dest_s.stop_name AS to_name,
+                dest_s.stop_lat AS next_lat,
+                dest_s.stop_lon AS next_lon,
                 r.route_short_name,
                 st1.departure_time,
                 st2.arrival_time,
@@ -594,15 +599,13 @@ def plan_trip_by_coords(
             to_name = row.to_name if row.to_name else "Unknown Stop"
             
             leg = {
-                "route": route_name,
-                "from": from_name,
-                "to": to_name,
-                "from_id": prev_id,
-                "to_id": next_id,
-                "walk_meters": round(dist),
+                "route": route_name, "from": from_name, "to": to_name,
+                "from_id": prev_id, "to_id": next_id, "walk_meters": round(dist),
                 "trip_id": row.trip_id.strip() if hasattr(row, 'trip_id') and row.trip_id else None
             }
             
+            time_penalty = 0 # NEW: Start with 0 time penalty
+
             if is_time_sensitive:
                 if not row.departure_time or not row.arrival_time: continue 
                 
@@ -620,7 +623,16 @@ def plan_trip_by_coords(
                     const_dt = datetime.combine(datetime.today(), constraint_obj)
                     
                     if (arr_dt + walk_buffer) > const_dt: continue
-                        
+                    
+                    # NEW: Calculate how many seconds "too early" this bus is!
+                    target_sec = constraint_obj.hour * 3600 + constraint_obj.minute * 60 + constraint_obj.second
+                    arr_sec = arr_obj.hour * 3600 + arr_obj.minute * 60 + arr_obj.second
+                    time_diff = target_sec - arr_sec
+                    if time_diff < 0: time_diff += 86400
+                    
+                    # Multiply by 5 to make waiting time severely penalize the route's score
+                    time_penalty = time_diff * 5 
+
                     new_constraint_str = dep_time_str
                     new_path = [leg] + path
                 except Exception:
@@ -628,37 +640,30 @@ def plan_trip_by_coords(
             else:
                 new_path = path + [leg]
                 new_constraint_str = None
-
-            target_id = orig_stop_id if is_time_sensitive else dest_stop_id
             
-            if next_search_id == target_id:
+            # Destination reached!
+            if next_search_id in target_ids:
+                final_walk = target_ids[next_search_id].walk_dist
                 readable_itinerary = []
                 
                 for i, step in enumerate(new_path):
                     if i == 0:
-                        total_start_walk = orig_walk_meters + step.get("walk_meters", 0)
+                        total_start_walk = initial_walk + step.get("walk_meters", 0)
                         if total_start_walk > 0:
                             readable_itinerary.append({
-                                "action": "Walk",
-                                "destination": step["from"],
-                                "distance_meters": total_start_walk
+                                "action": "Walk", "destination": step["from"], 
+                                "distance_meters": total_start_walk, "walk_time_minutes": math.ceil(total_start_walk / 84)
                             })
                     else:
                         if step.get("walk_meters", 0) > 0:
                             readable_itinerary.append({
-                                "action": "Walk",
-                                "destination": step["from"],
-                                "distance_meters": step["walk_meters"]
+                                "action": "Walk", "destination": step["from"], 
+                                "distance_meters": step["walk_meters"], "walk_time_minutes": math.ceil(step["walk_meters"] / 84)
                             })
                     
                     transit_leg = {
-                        "action": "Ride Bus",
-                        "route": step["route"],
-                        "from": step["from"],
-                        "to": step["to"],
-                        "from_id": step.get("from_id"),
-                        "to_id": step.get("to_id"),
-                        "trip_id": step.get("trip_id")
+                        "action": "Ride Bus", "route": step["route"], "from": step["from"], "to": step["to"],
+                        "from_id": step.get("from_id"), "to_id": step.get("to_id"), "trip_id": step.get("trip_id")
                     }
                     if is_time_sensitive:
                         transit_leg["departure"] = step["departure"]
@@ -666,11 +671,10 @@ def plan_trip_by_coords(
                         
                     readable_itinerary.append(transit_leg)
 
-                if dest_walk_meters > 0:
+                if final_walk > 0:
                     readable_itinerary.append({
-                        "action": "Walk",
-                        "destination": "Final Destination",
-                        "distance_meters": dest_walk_meters
+                        "action": "Walk", "destination": "Final Destination", 
+                        "distance_meters": final_walk, "walk_time_minutes": math.ceil(final_walk / 84)
                     })
 
                 return {
@@ -679,9 +683,18 @@ def plan_trip_by_coords(
                     "itinerary": readable_itinerary
                 }
 
-            if next_search_id not in visited:
-                visited.add(next_search_id)
-                queue.append((next_search_id, new_path, new_constraint_str))
+            is_anteater = "anteater" in (row.trip_id.lower() if row.trip_id else "")
+            agency_penalty = 0 if is_anteater else 50000 
+            
+            # NEW: Add the time_penalty to the total cost function!
+            new_g = g + 10000 + dist + agency_penalty + time_penalty
+            
+            h = haversine(row.next_lat, row.next_lon, target_stops[0].stop_lat, target_stops[0].stop_lon)
+            new_f = new_g + h
+
+            if next_search_id not in best_costs or new_g < best_costs[next_search_id]:
+                best_costs[next_search_id] = new_g
+                heapq.heappush(queue, (new_f, new_g, next_search_id, new_path, new_constraint_str, initial_walk))
 
     raise HTTPException(status_code=404, detail="No route found between these coordinates.")
 

@@ -35,6 +35,15 @@ class Route(Base):
     route_color = Column(String)
     route_text_color = Column(String)
 
+class Business(Base):
+    __tablename__ = "businesses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    category = Column(String, index=True)
+    lat = Column(Float)
+    lon = Column(Float)
+
 class Trip(Base):
     __tablename__ = "trips"
 

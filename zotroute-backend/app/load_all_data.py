@@ -1,12 +1,13 @@
 import os
+import json
+import httpx
 import pandas as pd
 import numpy as np
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 from app.init_db import SessionLocal, engine
-from app.models import Base, Stop, Route, Trip, StopTime, Shape
+from app.models import Base, Stop, Route, Trip, StopTime, Shape, Business
 
-# 1. Map "Logical" File Names to Database Models
 FILE_TO_MODEL = {
     'stops': Stop,
     'routes': Route,
@@ -15,7 +16,6 @@ FILE_TO_MODEL = {
     'stop_times': StopTime
 }
 
-# 2. Database Columns
 DB_COLUMNS = {
     'stops': ['stop_id', 'stop_code', 'stop_name', 'stop_lat', 'stop_lon'],
     'routes': ['route_id', 'agency_id', 'route_short_name', 'route_long_name', 'route_type', 'route_color', 'route_text_color'],
@@ -24,7 +24,6 @@ DB_COLUMNS = {
     'stop_times': ['trip_id', 'stop_id', 'arrival_time', 'departure_time', 'stop_sequence']
 }
 
-# 3. ID Columns that need a Prefix
 ID_COLUMNS_TO_PREFIX = [
     'stop_id', 'route_id', 'trip_id', 'shape_id', 'service_id', 'parent_station'
 ]
@@ -119,7 +118,6 @@ def build_indexes():
         "CREATE INDEX IF NOT EXISTS idx_stops_geom_geog ON stops USING GIST ( (ST_MakePoint(stop_lon, stop_lat)::geography) );"
     ]
 
-    # Create the transfers table and pre-compute 300m walking distances
     build_transfers_queries = [
         """
         CREATE TABLE IF NOT EXISTS transfers (
@@ -167,6 +165,89 @@ def build_indexes():
                 
         print("  Walking graph successfully built!")
 
+def load_or_fetch_businesses():
+    """Loads businesses from local JSON file or fetches from OSM based on DB boundaries."""
+    print("\n--- Processing Nearby Businesses ---")
+    db = SessionLocal()
+    backup_file = "businesses.json"
+
+    try:
+        if os.path.exists(backup_file):
+            print(f"Found local {backup_file}! Loading data...")
+            with open(backup_file, "r") as f:
+                businesses_data = json.load(f)
+        else:
+            bounds = db.execute(text("SELECT MIN(stop_lat), MAX(stop_lat), MIN(stop_lon), MAX(stop_lon) FROM stops")).fetchone()
+            
+            if not bounds or bounds[0] is None:
+                print("Error: No stops found in the database. Cannot fetch businesses.")
+                return
+                
+            min_lat, max_lat, min_lon, max_lon = bounds
+            bbox = f"{min_lat - 0.015},{min_lon - 0.015},{max_lat + 0.015},{max_lon + 0.015}"
+            
+            print("🌐 Fetching businesses for the ENTIRE transit network (This might take 1-2 minutes)...")
+            overpass_url = "https://overpass-api.de/api/interpreter"
+            query = f"""
+            [out:json][timeout:180];
+            (
+              nwr["amenity"~"restaurant|fast_food|food_court|cafe|ice_cream|bar|pub|nightclub"]({bbox});
+              nwr["shop"]({bbox});
+            );
+            out center;
+            """
+            
+            response = httpx.post(overpass_url, data={'data': query}, timeout=180.0)
+            if response.status_code != 200:
+                print(f"Failed to fetch from Overpass: {response.text}")
+                return
+                
+            elements = response.json().get("elements", [])
+            businesses_data = []
+            seen_names = set()
+
+            for e in elements:
+                if "tags" not in e or "name" not in e["tags"]: continue
+                tags = e["tags"]
+                name = tags["name"].strip()
+                name_lower = name.lower()
+                
+                if name_lower in seen_names: continue
+                if tags.get("amenity") in ["parking", "bench", "waste_basket", "toilets"]: continue
+
+                lat = e.get("lat") or (e.get("center", {}).get("lat"))
+                lon = e.get("lon") or (e.get("center", {}).get("lon"))
+                
+                if not lat or not lon: continue
+
+                raw_amenity = tags.get("amenity", "")
+                if "cafe" in raw_amenity or "ice_cream" in raw_amenity: category = "cafe"
+                elif "restaurant" in raw_amenity or "fast_food" in raw_amenity or "food_court" in raw_amenity: category = "food"
+                elif "bar" in raw_amenity or "pub" in raw_amenity or "nightclub" in raw_amenity: category = "bar"
+                else: category = "shop"
+
+                businesses_data.append({"name": name, "category": category, "lat": lat, "lon": lon})
+                seen_names.add(name_lower)
+
+            with open(backup_file, "w") as f:
+                json.dump(businesses_data, f, indent=4)
+            print(f"Saved {len(businesses_data)} businesses across the network to {backup_file}!")
+
+        print("Populating PostgreSQL database with businesses...")
+        chunk_size = 5000
+        total_inserted = 0
+        for i in range(0, len(businesses_data), chunk_size):
+            chunk = businesses_data[i:i + chunk_size]
+            db.bulk_insert_mappings(Business, chunk)
+            db.commit()
+            total_inserted += len(chunk)
+            
+        print(f"Successfully inserted {total_inserted} businesses!")
+
+    finally:
+        db.close()
+
+
 def main():
     base_dir = "datasets"
     if not os.path.exists(base_dir):
@@ -183,8 +264,11 @@ def main():
         if os.path.isdir(folder_path):
             load_dataset(folder_path)
             
+
     build_indexes()
-    print("\nData loading complete!")
+    load_or_fetch_businesses()
+    
+    print("\n🚀 All data loading and seeding is 100% complete!")
 
 if __name__ == "__main__":
     main()
