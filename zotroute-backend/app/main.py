@@ -462,7 +462,7 @@ def plan_trip_by_coords(
     arrive_by: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    # --- Helper: Haversine Distance ---
+    
     def haversine(lat1, lon1, lat2, lon2):
         R = 6371000
         phi1, phi2 = math.radians(float(lat1)), math.radians(float(lat2))
@@ -471,7 +471,6 @@ def plan_trip_by_coords(
         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    # 1. IMMEDIATE WALK CHECK (< 700 meters)
     direct_dist = haversine(origin_lat, origin_lon, dest_lat, dest_lon)
     if direct_dist <= 700:
         return {
@@ -484,8 +483,7 @@ def plan_trip_by_coords(
                 "walk_time_minutes": math.ceil(direct_dist / 84) 
             }]
         }
-
-    # 2. SEED MULTIPLE STARTING STOPS (Prevents Nearest-Stop Transfer Bias)
+    
     def get_nearby_stops(lat: float, lon: float):
         query = text("""
             SELECT stop_id, stop_name, stop_lat, stop_lon,
@@ -532,7 +530,6 @@ def plan_trip_by_coords(
     best_costs = {}
     max_depth = 4 
 
-    # Push ALL 4 nearby stops into the queue
     for s_stop in start_stops:
         s_id = s_stop.stop_id.strip()
         s_g = s_stop.walk_dist
@@ -604,7 +601,7 @@ def plan_trip_by_coords(
                 "trip_id": row.trip_id.strip() if hasattr(row, 'trip_id') and row.trip_id else None
             }
             
-            time_penalty = 0 # NEW: Start with 0 time penalty
+            time_penalty = 0 
 
             if is_time_sensitive:
                 if not row.departure_time or not row.arrival_time: continue 
@@ -624,15 +621,12 @@ def plan_trip_by_coords(
                     
                     if (arr_dt + walk_buffer) > const_dt: continue
                     
-                    # NEW: Calculate how many seconds "too early" this bus is!
                     target_sec = constraint_obj.hour * 3600 + constraint_obj.minute * 60 + constraint_obj.second
                     arr_sec = arr_obj.hour * 3600 + arr_obj.minute * 60 + arr_obj.second
                     time_diff = target_sec - arr_sec
                     if time_diff < 0: time_diff += 86400
                     
-                    # Multiply by 5 to make waiting time severely penalize the route's score
                     time_penalty = time_diff * 5 
-
                     new_constraint_str = dep_time_str
                     new_path = [leg] + path
                 except Exception:
@@ -641,7 +635,6 @@ def plan_trip_by_coords(
                 new_path = path + [leg]
                 new_constraint_str = None
             
-            # Destination reached!
             if next_search_id in target_ids:
                 final_walk = target_ids[next_search_id].walk_dist
                 readable_itinerary = []
@@ -686,9 +679,7 @@ def plan_trip_by_coords(
             is_anteater = "anteater" in (row.trip_id.lower() if row.trip_id else "")
             agency_penalty = 0 if is_anteater else 50000 
             
-            # NEW: Add the time_penalty to the total cost function!
             new_g = g + 10000 + dist + agency_penalty + time_penalty
-            
             h = haversine(row.next_lat, row.next_lon, target_stops[0].stop_lat, target_stops[0].stop_lon)
             new_f = new_g + h
 
