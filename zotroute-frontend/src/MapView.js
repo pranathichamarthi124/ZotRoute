@@ -119,7 +119,7 @@ function MapView({ filter, isPanelOpen, setIsPanelOpen }) {
         )
           .then((r) => r.json())
           .then((data) =>
-            data.nearby_businesses ? data.nearby_businesses.slice(0, 5) : [],
+            data.nearby_businesses ? data.nearby_businesses.slice(0, 10) : [],
           ),
       );
       const placesArrays = await Promise.all(placesPromises);
