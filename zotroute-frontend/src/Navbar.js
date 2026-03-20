@@ -1,32 +1,18 @@
 import React from "react";
 import "./Navbar.css";
 
-export default function Navbar({ filter, setFilter }) {
+export default function Navbar({ isPanelOpen }) {
   return (
-    <nav className="nav">
+    <nav
+      className="nav"
+      style={{
+        marginLeft: isPanelOpen ? "350px" : "0px",
+        transition: "margin-left 0.3s ease",
+      }}
+    >
       <div className="nav-proj-name">
         <h1>ZotRoute</h1>
         <p>One-Stop UCI Commute</p>
-      </div>
-      <div className="filter-buttons">
-        <button
-          className={filter === "all" ? "active" : ""}
-          onClick={() => setFilter("all")}
-        >
-          All Routes
-        </button>
-        <button
-          className={filter === "AntExp" ? "active" : ""}
-          onClick={() => setFilter("AntExp")}
-        >
-          Anteater Express
-        </button>
-        <button
-          className={filter === "OCTA" ? "active" : ""}
-          onClick={() => setFilter("OCTA")}
-        >
-          OCTA
-        </button>
       </div>
     </nav>
   );

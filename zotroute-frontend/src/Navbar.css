@@ -3,7 +3,7 @@
     top: 0;
     left: 0;
     right: 0;
-    background: antiquewhite;
+    background: darkslategray;
     padding: 15px 20px;
     display: flex;
     justify-content: space-between;
@@ -15,13 +15,13 @@
 .nav-proj-name h1 {
     margin: 0;
     font-size: 24px;
-    color: #0064a4;
+    color: antiquewhite;
 }
 
 .nav-proj-name p {
     margin: 0;
     font-size: 12px;
-    color: #666;
+    color: #eee;
 }
 
 .filter-buttons {
@@ -31,9 +31,9 @@
 
 .filter-buttons button {
     padding: 8px 16px;
-    border: 2px solid #0064a4;
+    border: 2px solid #152238;
     background: white;
-    color: #0064a4;
+    color: #152238;
     border-radius: 20px;
     cursor: pointer;
     font-size: 14px;
@@ -45,6 +45,6 @@
 }
 
 .filter-buttons button.active {
-    background: #0064a4;
+    background: #152238;
     color: white;
 }
